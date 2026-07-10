@@ -251,6 +251,39 @@ Ver arquivos de log:
 tail -f .runner-logs/neurotrack-app.log
 ```
 
+## Painel Web Local
+
+Para acompanhar status, ligar/desligar runners e ver logs sem ficar usando comandos no terminal:
+
+```bash
+cd /home/alangomes/actions-runners
+./dashboard.py
+```
+
+Abra:
+
+```text
+http://127.0.0.1:8765
+```
+
+O painel lê `runners.conf`, usa os PID files de `.runner-pids/`, mostra os logs de `.runner-logs/` e também os logs de diagnóstico do runner em `_diag/*.log`.
+
+Ver logs no painel não gera custo no GitHub. O painel só lê arquivos locais; custo/minutos só são consumidos quando jobs executam no GitHub Actions.
+
+No seletor de logs:
+
+* `Execução` mostra o stdout/stderr capturado pelo `runners.sh`.
+* `Diagnóstico` mostra arquivos internos do runner em `_diag`.
+* `Todos logs` combina as duas fontes.
+
+Para logs ainda mais detalhados dos steps do workflow, habilite debug no próprio repositório GitHub usando os secrets `ACTIONS_RUNNER_DEBUG=true` e `ACTIONS_STEP_DEBUG=true`. Isso aumenta a verbosidade dos jobs; não cobra por visualizar logs, mas jobs mais verbosos podem demorar um pouco mais e consumir minutos enquanto executam.
+
+Para usar outra porta:
+
+```bash
+RUNNERS_DASHBOARD_PORT=8780 ./dashboard.py
+```
+
 ## Labels Recomendadas
 
 ### Neurotrack App

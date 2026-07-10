@@ -4,7 +4,9 @@ actions-runner-*.tar.gz
 # Runtime state
 .runner-logs/
 .runner-pids/
+__pycache__/
 
 
 # Local runner folders are added by configure-runner.sh as /<name>/
 agentsorch/
+/neurotrack-app/
