@@ -10,3 +10,8 @@ __pycache__/
 # Local runner folders are added by configure-runner.sh as /<name>/
 agentsorch/
 /neurotrack-app/
+/neurotrack_ms/
+/ea-fc-sheffield-hub/
+/neurotrack_web/
+/docsneurotrackapp/
+/roboapostas/
