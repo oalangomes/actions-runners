@@ -1,0 +1,10 @@
+# GitHub Actions runner archives
+actions-runner-*.tar.gz
+
+# Runtime state
+.runner-logs/
+.runner-pids/
+
+
+# Local runner folders are added by configure-runner.sh as /<name>/
+agentsorch/

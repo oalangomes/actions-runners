@@ -72,6 +72,18 @@ update_runners_conf() {
   mv "$tmp" "$config_path"
 }
 
+update_gitignore() {
+  local gitignore_path="$1"
+  local runner_name="$2"
+  local entry="/$runner_name/"
+
+  [[ -f "$gitignore_path" ]] || touch "$gitignore_path"
+
+  if ! grep -Fxq "$entry" "$gitignore_path"; then
+    printf '%s\n' "$entry" >> "$gitignore_path"
+  fi
+}
+
 while (($#)); do
   case "$1" in
     --github-line)
@@ -137,6 +149,7 @@ BASE_DIR="$(realpath -m "$BASE_DIR")"
 TAR_PATH="$BASE_DIR/$RUNNER_TAR"
 RUNNER_DIR="$BASE_DIR/$NAME"
 CONFIG_PATH="$BASE_DIR/runners.conf"
+GITIGNORE_PATH="$BASE_DIR/.gitignore"
 MACHINE_NAME="$(hostname -s 2>/dev/null || hostname 2>/dev/null || true)"
 MACHINE_NAME="${MACHINE_NAME//[[:space:]]/-}"
 [[ -n "$MACHINE_NAME" ]] || die "nao foi possivel identificar o nome da maquina"
@@ -179,6 +192,12 @@ step "Atualizando runners.conf"
 update_runners_conf "$CONFIG_PATH" "$NAME" "$RUNNER_DIR"
 echo "Atualizado: $CONFIG_PATH"
 echo "$NAME|$RUNNER_DIR"
+
+step "Atualizando .gitignore"
+
+update_gitignore "$GITIGNORE_PATH" "$NAME"
+echo "Atualizado: $GITIGNORE_PATH"
+echo "/$NAME/"
 
 step "Executando config.sh"
 
