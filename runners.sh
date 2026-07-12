@@ -7,6 +7,7 @@ PID_DIR="$BASE_DIR/.runner-pids"
 LOG_DIR="$BASE_DIR/.runner-logs"
 CACHE_ENV_PATH="$BASE_DIR/runner-cache-env.sh"
 LOG_MAX_BYTES="${RUNNER_LOG_MAX_BYTES:-10485760}"
+ARCHIVE_DIAG_PAGES_ON_START="${RUNNER_ARCHIVE_DIAG_PAGES_ON_START:-1}"
 
 usage() {
   cat <<'EOF'
@@ -142,6 +143,23 @@ target_indexes() {
   runner_index "$target" || die "runner desconhecido: $target"
 }
 
+runner_processes_by_path() {
+  local path="$1"
+  [[ -d "$path" ]] || return 0
+
+  # Detects orphaned/duplicate GitHub runner processes tied to this runner folder.
+  # This prevents a second run.sh from starting while Runner.Listener/Runner.Worker
+  # from a previous interrupted session is still alive.
+  pgrep -af "$path" 2>/dev/null |
+    awk '/run\.sh|Runner\.Listener|Runner\.Worker/ { print $1 }' |
+    sort -n -u || true
+}
+
+runner_has_process_by_path() {
+  local path="$1"
+  [[ -n "$(runner_processes_by_path "$path" | head -n 1)" ]]
+}
+
 rotate_log_if_needed() {
   local file="$1"
 
@@ -154,6 +172,24 @@ rotate_log_if_needed() {
     mv "$file" "$file.$(date '+%Y%m%d%H%M%S')"
     touch "$file"
   fi
+}
+
+archive_diag_pages() {
+  local path="$1"
+  local pages_dir="$path/_diag/pages"
+  local archive_dir
+
+  [[ "$ARCHIVE_DIAG_PAGES_ON_START" == "1" ]] || return 0
+  [[ -d "$pages_dir" ]] || return 0
+
+  if ! find "$pages_dir" -mindepth 1 -maxdepth 1 -print -quit | grep -q .; then
+    return 0
+  fi
+
+  archive_dir="$path/_diag/pages.archive.$(date '+%Y%m%d%H%M%S')"
+  mkdir -p "$archive_dir"
+  find "$pages_dir" -mindepth 1 -maxdepth 1 -exec mv {} "$archive_dir" \;
+  echo "[DIAG] _diag/pages arquivado em: $archive_dir"
 }
 
 source_cache_env() {
@@ -180,6 +216,7 @@ start_runner() {
   local run_sh="$path/run.sh"
   local pid
   local file
+  local orphan_pids
 
   if [[ "$enabled" != "true" ]]; then
     info "[SKIP] $name desabilitado no runners.conf"
@@ -195,9 +232,17 @@ start_runner() {
     return 0
   fi
 
+  orphan_pids="$(runner_processes_by_path "$path" | paste -sd ' ' -)"
+  if [[ -n "$orphan_pids" ]]; then
+    echo "[OK] $name parece ja estar rodando sem pid file valido: $orphan_pids"
+    echo "${orphan_pids%% *}" > "$(pid_file "$name")"
+    return 0
+  fi
+
   mkdir -p "$PID_DIR" "$LOG_DIR"
   file="$(log_file "$name")"
   rotate_log_if_needed "$file"
+  archive_diag_pages "$path"
   source_cache_env "$name" "$profile" "$repo"
 
   echo "[START] iniciando $name"
@@ -213,35 +258,64 @@ start_runner() {
     export LOCAL_RUNNER_NAME="$name"
     export LOCAL_RUNNER_PROFILE="$profile"
     export LOCAL_RUNNER_REPO="$repo"
-    nohup ./run.sh >> "$file" 2>&1 &
+    if command_exists setsid; then
+      nohup setsid bash -c 'exec ./run.sh' >> "$file" 2>&1 &
+    else
+      nohup ./run.sh >> "$file" 2>&1 &
+    fi
     echo $! > "$(pid_file "$name")"
   )
 }
 
+terminate_pid_group() {
+  local pid="$1"
+
+  [[ -n "$pid" ]] || return 0
+
+  if is_running_pid "$pid"; then
+    kill -- "-$pid" 2>/dev/null || kill "$pid" 2>/dev/null || true
+  fi
+}
+
+kill_runner_processes_by_path() {
+  local path="$1"
+  local pid
+
+  while read -r pid; do
+    [[ -n "$pid" ]] || continue
+    kill "$pid" 2>/dev/null || true
+  done < <(runner_processes_by_path "$path")
+}
+
 stop_runner() {
   local name="$1"
+  local path="${2:-}"
   local pid
 
   pid="$(runner_pid "$name" || true)"
-  if ! is_running_pid "$pid"; then
+
+  if ! is_running_pid "$pid" && [[ -n "$path" ]] && ! runner_has_process_by_path "$path"; then
     echo "[STOP] $name ja esta parado"
     rm -f "$(pid_file "$name")"
     return 0
   fi
 
-  echo "[STOP] parando $name (pid $pid)"
-  kill "$pid" 2>/dev/null || true
+  echo "[STOP] parando $name${pid:+ (pid $pid)}"
+  terminate_pid_group "$pid"
 
   for _ in {1..20}; do
-    if ! is_running_pid "$pid"; then
+    if ! is_running_pid "$pid" && { [[ -z "$path" ]] || ! runner_has_process_by_path "$path"; }; then
       rm -f "$(pid_file "$name")"
       return 0
     fi
     sleep 0.5
   done
 
-  echo "[STOP] encerrando $name com SIGKILL"
-  kill -9 "$pid" 2>/dev/null || true
+  echo "[STOP] encerrando processos remanescentes de $name"
+  if [[ -n "$path" ]]; then
+    kill_runner_processes_by_path "$path"
+  fi
+  [[ -n "$pid" ]] && kill -9 "$pid" 2>/dev/null || true
   rm -f "$(pid_file "$name")"
 }
 
@@ -252,12 +326,15 @@ status_runner() {
   local repo="$4"
   local enabled="$5"
   local pid
+  local extra_pids
 
   pid="$(runner_pid "$name" || true)"
+  extra_pids="$(runner_processes_by_path "$path" | paste -sd ' ' -)"
+
   if [[ "$enabled" != "true" ]]; then
     echo "[DISABLED] $name profile=$profile repo=${repo:-n/a} $path"
-  elif is_running_pid "$pid"; then
-    echo "[OK] $name rodando pid=$pid profile=$profile repo=${repo:-n/a} $path"
+  elif is_running_pid "$pid" || [[ -n "$extra_pids" ]]; then
+    echo "[OK] $name rodando pid=${pid:-n/a} detected=${extra_pids:-n/a} profile=$profile repo=${repo:-n/a} $path"
   else
     echo "[STOP] $name parado profile=$profile repo=${repo:-n/a} $path"
   fi
@@ -297,6 +374,7 @@ doctor_runner() {
   local enabled="$5"
   local ok=0
   local cmd
+  local detected_pids
 
   echo
   echo "Runner: $name"
@@ -325,6 +403,13 @@ doctor_runner() {
     echo "[WARN] .runner nao encontrado"
   fi
 
+  detected_pids="$(runner_processes_by_path "$path" | paste -sd ' ' -)"
+  if [[ -n "$detected_pids" ]]; then
+    echo "[OK] processos detectados: $detected_pids"
+  else
+    echo "[INFO] nenhum processo ativo detectado para este runner"
+  fi
+
   if [[ -f "$CACHE_ENV_PATH" ]]; then
     echo "[OK] runner-cache-env.sh encontrado"
     source_cache_env "$name" "$profile" "$repo"
@@ -350,7 +435,7 @@ recent_log_has_error() {
 
   [[ -f "$file" ]] || return 1
 
-  tail -n 200 "$file" | grep -Eiq 'error|fatal|unauthorized|forbidden|denied|failed|cannot|exception|segmentation fault'
+  tail -n 200 "$file" | grep -Eiq 'error|fatal|unauthorized|forbidden|denied|failed|cannot|exception|segmentation fault|already exists'
 }
 
 health_runner() {
@@ -360,19 +445,25 @@ health_runner() {
   local _repo="$4"
   local enabled="$5"
   local pid
+  local detected_count
 
   pid="$(runner_pid "$name" || true)"
+  detected_count="$(runner_processes_by_path "$path" | wc -l | tr -d '[:space:]')"
 
   if [[ "$enabled" != "true" ]]; then
     echo "[INFO] $name desabilitado"
     return 0
   fi
 
-  if [[ -f "$(pid_file "$name")" ]] && ! is_running_pid "$pid"; then
+  if [[ -f "$(pid_file "$name")" ]] && ! is_running_pid "$pid" && [[ "$detected_count" -eq 0 ]]; then
     echo "[WARN] $name possui PID stale: $(pid_file "$name")"
   fi
 
-  if ! is_running_pid "$pid"; then
+  if [[ "$detected_count" -gt 1 ]]; then
+    echo "[WARN] $name pode ter processos duplicados detectados: $(runner_processes_by_path "$path" | paste -sd ' ' -)"
+  fi
+
+  if ! is_running_pid "$pid" && [[ "$detected_count" -eq 0 ]]; then
     echo "[WARN] $name parado"
   fi
 
@@ -427,12 +518,12 @@ case "$ACTION" in
     ;;
   stop)
     for i in "${indexes[@]}"; do
-      stop_runner "${RUNNER_NAMES[$i]}"
+      stop_runner "${RUNNER_NAMES[$i]}" "${RUNNER_PATHS[$i]}"
     done
     ;;
   restart)
     for i in "${indexes[@]}"; do
-      stop_runner "${RUNNER_NAMES[$i]}"
+      stop_runner "${RUNNER_NAMES[$i]}" "${RUNNER_PATHS[$i]}"
       start_runner "${RUNNER_NAMES[$i]}" "${RUNNER_PATHS[$i]}" "${RUNNER_PROFILES[$i]}" "${RUNNER_REPOS[$i]}" "${RUNNER_ENABLED[$i]}"
     done
     ;;
