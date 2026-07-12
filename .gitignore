@@ -18,4 +18,5 @@ agentsorch/
 /roboapostas/
 /agentsorch/
 *.conf
+/runners.conf
 runners.conf

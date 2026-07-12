@@ -292,6 +292,8 @@ Para usar outra porta:
 RUNNERS_DASHBOARD_PORT=8780 ./dashboard.py
 ```
 
+Ao abrir este repositorio no VS Code, a task `Start runners dashboard` executa `./start-dashboard.sh` automaticamente e deixa o painel em `http://127.0.0.1:8765`. Na primeira abertura o VS Code pode pedir permissao para tasks automaticas; autorize para manter o dashboard sempre ligado ao abrir a pasta.
+
 ## Labels Recomendadas
 
 ### Neurotrack App
