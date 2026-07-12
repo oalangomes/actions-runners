@@ -39,17 +39,27 @@ run_if_exists() {
 }
 
 source_cache_env() {
+  local profile="$1"
+
   [[ -f "$CACHE_ENV_PATH" ]] || {
     echo "ERRO: runner-cache-env.sh nao encontrado: $CACHE_ENV_PATH" >&2
     exit 1
   }
+
+  export LOCAL_RUNNER_PROFILE="$profile"
+  export RUNNER_CACHE_PROFILE="$profile"
   # shellcheck source=/dev/null
   source "$CACHE_ENV_PATH"
+
+  echo "Cache profile: $RUNNER_CACHE_PROFILE"
+  echo "Stack cache:   $RUNNER_STACK_CACHE_ROOT"
+  echo "Tool cache:    $RUNNER_TOOL_CACHE"
 }
 
 prewarm_node() {
   echo
   echo "==> Node"
+  source_cache_env node
   run_if_exists node --version
   run_if_exists npm --version
   run_if_exists npm config get cache
@@ -61,6 +71,7 @@ prewarm_node() {
 prewarm_python() {
   echo
   echo "==> Python"
+  source_cache_env python
   run_if_exists python3 --version
   run_if_exists pip3 --version
   run_if_exists pip3 cache dir
@@ -69,6 +80,7 @@ prewarm_python() {
 prewarm_flutter() {
   echo
   echo "==> Flutter/Android"
+  source_cache_env flutter
   run_if_exists java -version
   run_if_exists flutter --version
   run_if_exists flutter doctor
@@ -79,6 +91,7 @@ prewarm_flutter() {
 prewarm_java() {
   echo
   echo "==> Java"
+  source_cache_env java
   run_if_exists java -version
   run_if_exists gradle --version
   run_if_exists mvn --version
@@ -88,6 +101,7 @@ prewarm_java() {
 prewarm_go() {
   echo
   echo "==> Go"
+  source_cache_env go
   run_if_exists go version
   echo "GOMODCACHE=$GOMODCACHE"
   echo "GOCACHE=$GOCACHE"
@@ -96,6 +110,7 @@ prewarm_go() {
 prewarm_dotnet() {
   echo
   echo "==> .NET"
+  source_cache_env dotnet
   run_if_exists dotnet --info
   echo "NUGET_PACKAGES=$NUGET_PACKAGES"
 }
@@ -106,8 +121,6 @@ if [[ "$STACK" == "help" || "$STACK" == "-h" || "$STACK" == "--help" ]]; then
   usage
   exit 0
 fi
-
-source_cache_env
 
 case "$STACK" in
   node)
