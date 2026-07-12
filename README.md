@@ -23,12 +23,18 @@ A ideia é usar uma máquina Linux para rodar jobs pesados — testes, builds Fl
 ├── .runner-logs/
 ├── .runner-pids/
 ├── .runner-cache/
+│   ├── tools/
+│   ├── shared/
+│   └── stacks/
+│       ├── flutter/
+│       ├── node/
+│       └── python/
 ├── agentsorch/
 ├── neurotrack-web/
 └── neurotrack-app/
 ```
 
-Cada subpasta representa um runner registrado em um repositório GitHub.
+Cada subpasta de repo representa um runner registrado no GitHub. Os caches ficam fora do `_work` dos runners.
 
 ---
 
@@ -38,60 +44,14 @@ Cada subpasta representa um runner registrado em um repositório GitHub.
 |---|---|
 | `configure-runner.sh` | cria pasta, extrai o tarball, registra runner no GitHub e atualiza `runners.conf` |
 | `runners.sh` | start/stop/restart/status/list/doctor/health/logs dos runners |
-| `runner-cache-env.sh` | exporta caches persistentes para ferramentas e actions |
+| `runner-cache-env.sh` | exporta caches persistentes por profile/stack fora do `_work` |
 | `cache.sh` | mostra status e limpa caches/logs com `--dry-run` |
 | `prewarm-cache.sh` | aquece caches e valida stacks antes dos workflows |
 | `dashboard.py` | painel local com status, logs, saúde, cache e alertas |
 
 ---
 
-## Pré-requisitos
-
-```bash
-git --version
-tar --version
-sha256sum --version
-python3 --version
-```
-
-Stacks opcionais:
-
-```bash
-# Node/Web
-node -v
-npm -v
-
-# Python
-python3 --version
-pip3 --version
-
-# Flutter/Android
-flutter doctor
-java -version
-adb version
-```
-
----
-
-## Tarball do runner
-
-O arquivo deve estar no diretório raiz:
-
-```text
-/home/alangomes/actions-runners/actions-runner-linux-x64-2.335.1.tar.gz
-```
-
-Checksum esperado:
-
-```text
-4ef2f25285f0ae4477f1fe1e346db76d2f3ebf03824e2ddd1973a2819bf6c8cf
-```
-
-O projeto **não baixa** o tarball automaticamente. Ele valida e extrai o arquivo já existente.
-
----
-
-## Configurar um runner
+## Configuração simples de runner
 
 No GitHub:
 
@@ -116,13 +76,26 @@ chmod +x configure-runner.sh runners.sh cache.sh prewarm-cache.sh dashboard.py
   --labels "flutter,android,neurotrack-app,alan-runner"
 ```
 
-O script vai:
+Esse continua sendo o fluxo simples. O script infere o `profile` automaticamente a partir das labels/nome:
 
-1. extrair o runner em `/home/alangomes/actions-runners/neurotrack-app`;
-2. registrar no GitHub com nome `<hostname>-neurotrack-app`;
-3. inferir `profile=flutter`;
-4. atualizar `runners.conf`;
-5. adicionar a pasta no `.gitignore`.
+| Labels/nome | Profile inferido |
+|---|---|
+| `flutter`, `android` | `flutter` |
+| `node`, `npm`, `pnpm`, `web` | `node` |
+| `python`, `pytest`, `pip` | `python` |
+| `java`, `maven`, `gradle` | `java` |
+| `dotnet`, `nuget` | `dotnet` |
+| `go`, `golang` | `go` |
+| sem correspondência | `generic` |
+
+Se quiser sobrescrever manualmente:
+
+```bash
+./configure-runner.sh \
+  --github-line "./config.sh --url https://github.com/oalangomes/agentsorch --token TOKEN" \
+  --labels "python,node,agentsorch,alan-runner" \
+  --profile python
+```
 
 ---
 
@@ -137,6 +110,8 @@ neurotrack-web|/home/alangomes/actions-runners/neurotrack-web|node|oalangomes/ne
 agentsorch|/home/alangomes/actions-runners/agentsorch|python|oalangomes/agentsorch|true
 ```
 
+Na prática, você **não precisa editar isso na mão**. O `configure-runner.sh` preenche.
+
 Formato antigo também funciona:
 
 ```properties
@@ -144,6 +119,130 @@ neurotrack-app|/home/alangomes/actions-runners/neurotrack-app
 ```
 
 Nesse caso, o perfil vira `generic`, repo fica vazio e `enabled=true`.
+
+---
+
+## Como fica a config de cada runner de repo?
+
+Simples como antes.
+
+### Neurotrack App
+
+```bash
+./configure-runner.sh \
+  --github-line "./config.sh --url https://github.com/oalangomes/neurotrack-app --token TOKEN" \
+  --labels "flutter,android,neurotrack-app,alan-runner"
+```
+
+Resultado no `runners.conf`:
+
+```properties
+neurotrack-app|/home/alangomes/actions-runners/neurotrack-app|flutter|oalangomes/neurotrack-app|true
+```
+
+Cache usado:
+
+```text
+/home/alangomes/actions-runners/.runner-cache/stacks/flutter/
+```
+
+### NeuroTrack Web
+
+```bash
+./configure-runner.sh \
+  --github-line "./config.sh --url https://github.com/oalangomes/neurotrack-web --token TOKEN" \
+  --labels "node,web,neurotrack-web,alan-runner"
+```
+
+Resultado:
+
+```properties
+neurotrack-web|/home/alangomes/actions-runners/neurotrack-web|node|oalangomes/neurotrack-web|true
+```
+
+Cache usado:
+
+```text
+/home/alangomes/actions-runners/.runner-cache/stacks/node/
+```
+
+### AgentsOrch
+
+```bash
+./configure-runner.sh \
+  --github-line "./config.sh --url https://github.com/oalangomes/agentsorch --token TOKEN" \
+  --labels "python,node,agentsorch,alan-runner" \
+  --profile python
+```
+
+Resultado:
+
+```properties
+agentsorch|/home/alangomes/actions-runners/agentsorch|python|oalangomes/agentsorch|true
+```
+
+Cache usado:
+
+```text
+/home/alangomes/actions-runners/.runner-cache/stacks/python/
+```
+
+---
+
+## Cache persistente
+
+O `_work` continua sendo apenas workspace do GitHub Runner:
+
+```text
+/home/alangomes/actions-runners/neurotrack-app/_work/
+```
+
+Os caches duráveis ficam fora dele:
+
+```text
+/home/alangomes/actions-runners/.runner-cache/
+├── tools/
+│   └── tool-cache/
+├── shared/
+└── stacks/
+    ├── flutter/
+    ├── node/
+    ├── python/
+    ├── java/
+    ├── go/
+    └── dotnet/
+```
+
+### O que fica compartilhado
+
+```text
+.runner-cache/tools/tool-cache/
+```
+
+Usado por:
+
+- `RUNNER_TOOL_CACHE`
+- `AGENT_TOOLSDIRECTORY`
+- actions de setup de ferramentas
+
+### O que fica por profile/stack
+
+```text
+.runner-cache/stacks/<profile>/
+```
+
+Usado por:
+
+- npm, pnpm, yarn;
+- Gradle e Maven;
+- pip e pipx;
+- Pub/Flutter;
+- Cargo/Rust;
+- Go;
+- .NET/NuGet;
+- Playwright.
+
+Isso evita misturar cache de Flutter com Node/Python, sem colocar cache dentro do `_work`.
 
 ---
 
@@ -165,7 +264,7 @@ Validação por estrutura e stack:
 ./runners.sh doctor all
 ```
 
-Alertas rápidos no terminal:
+Alertas rápidos:
 
 ```bash
 ./runners.sh health all
@@ -173,43 +272,33 @@ Alertas rápidos no terminal:
 
 ---
 
-## Cache persistente
+## Inspecionar e limpar cache
 
-`runner-cache-env.sh` configura caches em:
-
-```text
-/home/alangomes/actions-runners/.runner-cache/
-```
-
-Inclui:
-
-- `RUNNER_TOOL_CACHE` e `AGENT_TOOLSDIRECTORY`;
-- npm, pnpm, yarn;
-- Gradle e Maven;
-- pip e pipx;
-- Pub/Flutter;
-- Cargo/Rust;
-- Go;
-- .NET/NuGet;
-- Playwright.
-
-Status:
+Listar profiles com cache criado:
 
 ```bash
-./cache.sh status
+./cache.sh profiles
 ```
 
-Validação:
+Status por profile:
 
 ```bash
-./cache.sh doctor
+./cache.sh status --profile flutter
+./cache.sh status --profile node
+./cache.sh status --profile python
+```
+
+Validação por profile:
+
+```bash
+./cache.sh doctor --profile flutter
 ```
 
 Limpeza segura:
 
 ```bash
-./cache.sh clean all --older-than 30 --dry-run
-./cache.sh clean gradle --older-than 45
+./cache.sh clean all --profile flutter --older-than 30 --dry-run
+./cache.sh clean gradle --profile flutter --older-than 45
 ./cache.sh clean logs --older-than 14
 ```
 
@@ -226,13 +315,13 @@ Antes de rodar workflows pesados:
 ./prewarm-cache.sh all
 ```
 
-Para Flutter, ele executa também:
+Cada stack aquece o cache no profile correto:
 
-```bash
-flutter precache --android
+```text
+node    → .runner-cache/stacks/node/
+python  → .runner-cache/stacks/python/
+flutter → .runner-cache/stacks/flutter/
 ```
-
-Isso ajuda a reduzir tempo perdido com downloads e validações repetidas dentro do workflow.
 
 ---
 
@@ -256,23 +345,9 @@ O painel mostra:
 - profile, repo, PID e uptime;
 - logs de execução e `_diag`;
 - cards de resumo;
-- cache local por categoria;
+- cache local por categoria, incluindo `tools`, `shared` e `stack:<profile>`;
 - alertas de runner parado, PID órfão, erro recente em log, disco baixo, cache grande e estrutura incompleta;
 - botões de start/stop/restart.
-
-Porta customizada:
-
-```bash
-RUNNERS_DASHBOARD_PORT=8780 ./dashboard.py
-```
-
-Host customizado:
-
-```bash
-RUNNERS_DASHBOARD_HOST=0.0.0.0 ./dashboard.py
-```
-
-Use `0.0.0.0` apenas em rede confiável, porque o painel executa ações locais.
 
 ---
 
@@ -303,30 +378,6 @@ Copie o template desejado para o repo alvo em:
 | `Self --skip` | pula self-hosted e usa GitHub-hosted |
 | Sem label | default = `Self --force` |
 
-> O fallback do modo `Self` exige um token com permissão de leitura administrativa salvo como `ACTIONS_ADMIN_READ_TOKEN`, porque o workflow precisa consultar runners disponíveis.
-
----
-
-## Exemplo simples
-
-```yaml
-name: CI Local Runner
-
-on:
-  workflow_dispatch:
-  pull_request:
-
-jobs:
-  test:
-    runs-on: [self-hosted, linux, x64, neurotrack-app]
-
-    steps:
-      - uses: actions/checkout@v4
-      - run: flutter doctor
-      - run: flutter pub get
-      - run: flutter test
-```
-
 ---
 
 ## Segurança
@@ -348,8 +399,6 @@ Boas práticas:
 
 ### `Waiting for a runner to pick up this job...`
 
-Nenhum runner compatível está online/livre.
-
 ```bash
 ./runners.sh status
 ./runners.sh start neurotrack-app
@@ -365,9 +414,10 @@ Nenhum runner compatível está online/livre.
 ### Cache grande demais
 
 ```bash
-./cache.sh status
-./cache.sh clean all --older-than 30 --dry-run
-./cache.sh clean all --older-than 30
+./cache.sh profiles
+./cache.sh status --profile flutter
+./cache.sh clean all --profile flutter --older-than 30 --dry-run
+./cache.sh clean all --profile flutter --older-than 30
 ```
 
 ### Stack ausente
@@ -375,19 +425,6 @@ Nenhum runner compatível está online/livre.
 ```bash
 ./runners.sh doctor neurotrack-app
 ./prewarm-cache.sh flutter
-```
-
-### Ver logs
-
-```bash
-./runners.sh logs neurotrack-app
-tail -f .runner-logs/neurotrack-app.log
-```
-
-Ou use o dashboard:
-
-```bash
-./dashboard.py
 ```
 
 ---
