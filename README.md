@@ -272,6 +272,46 @@ Alertas rápidos:
 
 ---
 
+## Proteção contra runner duplicado e erro `_diag/pages already exists`
+
+O `runners.sh` evita iniciar uma segunda instância do mesmo runner quando ainda existe `run.sh`, `Runner.Listener` ou `Runner.Worker` vivo no diretório do runner.
+
+Também inicia o runner em um process group próprio com `setsid` quando disponível. Assim, `stop` e `restart` encerram o grupo inteiro, não apenas o shell pai.
+
+Antes de um novo start, se o runner estiver parado, o script arquiva arquivos antigos de:
+
+```text
+<runner>/_diag/pages/
+```
+
+em:
+
+```text
+<runner>/_diag/pages.archive.YYYYMMDDHHMMSS/
+```
+
+Isso reduz colisões como:
+
+```text
+The file '<runner>/_diag/pages/<id>.log' already exists.
+```
+
+Comandos úteis:
+
+```bash
+./runners.sh health agentsorch
+./runners.sh stop agentsorch
+./runners.sh start agentsorch
+```
+
+Se quiser desativar o arquivamento automático de `_diag/pages`:
+
+```bash
+RUNNER_ARCHIVE_DIAG_PAGES_ON_START=0 ./runners.sh start agentsorch
+```
+
+---
+
 ## Inspecionar e limpar cache
 
 Listar profiles com cache criado:
@@ -410,6 +450,19 @@ Boas práticas:
 ./runners.sh health all
 ./runners.sh restart neurotrack-app
 ```
+
+### `_diag/pages/<id>.log already exists`
+
+Causa provável: instância anterior do runner ficou parcialmente viva ou diagnóstico antigo conflitou no restart.
+
+Use:
+
+```bash
+./runners.sh health agentsorch
+./runners.sh restart agentsorch
+```
+
+O `restart` agora tenta parar o process group inteiro e arquiva `_diag/pages` antes de subir novamente.
 
 ### Cache grande demais
 
