@@ -5,6 +5,7 @@ BASE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CACHE_ENV_PATH="$BASE_DIR/runner-cache-env.sh"
 DRY_RUN=0
 OLDER_THAN_DAYS=30
+CACHE_PROFILE="shared"
 
 usage() {
   cat <<'EOF'
@@ -15,20 +16,23 @@ Acoes:
   status      mostra tamanho de caches conhecidos
   doctor      valida variaveis e diretorios de cache
   clean       limpa cache por alvo e idade
+  profiles    lista perfis/stacks com cache criado
   help        mostra ajuda
 
 Alvos:
   all, npm, pnpm, yarn, gradle, maven, pip, pub, cargo, go, dotnet, nuget, playwright, tool-cache, logs
 
 Opcoes:
-  --older-than N   limpa arquivos com mais de N dias (default: 30)
-  --dry-run        mostra o que seria removido sem apagar
+  --profile NAME    profile/stack a inspecionar: shared, node, python, flutter, android, java...
+  --older-than N    limpa arquivos com mais de N dias (default: 30)
+  --dry-run         mostra o que seria removido sem apagar
 
 Exemplos:
-  ./cache.sh status
-  ./cache.sh doctor
-  ./cache.sh clean all --older-than 30 --dry-run
-  ./cache.sh clean gradle --older-than 45
+  ./cache.sh status --profile flutter
+  ./cache.sh status --profile node
+  ./cache.sh profiles
+  ./cache.sh doctor --profile python
+  ./cache.sh clean all --profile flutter --older-than 30 --dry-run
   ./cache.sh clean logs --older-than 14
 EOF
 }
@@ -38,8 +42,14 @@ die() {
   exit 1
 }
 
+normalize_profile() {
+  printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9._-' '-'
+}
+
 source_cache_env() {
   [[ -f "$CACHE_ENV_PATH" ]] || die "runner-cache-env.sh nao encontrado: $CACHE_ENV_PATH"
+  export RUNNER_CACHE_PROFILE="$(normalize_profile "$CACHE_PROFILE")"
+  export LOCAL_RUNNER_PROFILE="$RUNNER_CACHE_PROFILE"
   # shellcheck source=/dev/null
   source "$CACHE_ENV_PATH"
 }
@@ -59,7 +69,7 @@ cache_path() {
     pnpm) echo "$PNPM_STORE_PATH" ;;
     yarn) echo "$YARN_CACHE_FOLDER" ;;
     gradle) echo "$GRADLE_USER_HOME" ;;
-    maven) echo "$RUNNER_CACHE_ROOT/maven/repository" ;;
+    maven) echo "$RUNNER_STACK_CACHE_ROOT/maven/repository" ;;
     pip) echo "$PIP_CACHE_DIR" ;;
     pub) echo "$PUB_CACHE" ;;
     cargo) echo "$CARGO_HOME" ;;
@@ -77,8 +87,27 @@ all_targets() {
   echo "tool-cache npm pnpm yarn gradle maven pip pub cargo go dotnet nuget playwright logs"
 }
 
+print_profiles() {
+  local stacks_dir="$RUNNER_CACHE_ROOT/stacks"
+  echo "Cache root: $RUNNER_CACHE_ROOT"
+  echo "Tools:      $RUNNER_TOOLS_CACHE_ROOT"
+  echo "Shared:     $RUNNER_SHARED_CACHE_ROOT"
+  echo
+  echo "Profiles:"
+
+  if [[ -d "$stacks_dir" ]]; then
+    find "$stacks_dir" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | sort
+  else
+    echo "(nenhum profile criado ainda)"
+  fi
+}
+
 print_status() {
   local target path
+  echo "Profile: $RUNNER_CACHE_PROFILE"
+  echo "Stack:   $RUNNER_STACK_CACHE_ROOT"
+  echo "Tools:   $RUNNER_TOOL_CACHE"
+  echo
   printf '%-14s %10s %s\n' "cache" "size" "path"
   printf '%-14s %10s %s\n' "-----" "----" "----"
 
@@ -87,11 +116,16 @@ print_status() {
     printf '%-14s %10s %s\n' "$target" "$(human_size "$path")" "$path"
   done
 
-  printf '\n%-14s %10s %s\n' "TOTAL" "$(human_size "$RUNNER_CACHE_ROOT")" "$RUNNER_CACHE_ROOT"
+  printf '\n%-14s %10s %s\n' "STACK" "$(human_size "$RUNNER_STACK_CACHE_ROOT")" "$RUNNER_STACK_CACHE_ROOT"
+  printf '%-14s %10s %s\n' "TOOLS" "$(human_size "$RUNNER_TOOLS_CACHE_ROOT")" "$RUNNER_TOOLS_CACHE_ROOT"
+  printf '%-14s %10s %s\n' "TOTAL" "$(human_size "$RUNNER_CACHE_ROOT")" "$RUNNER_CACHE_ROOT"
 }
 
 doctor() {
   echo "RUNNER_CACHE_ROOT=$RUNNER_CACHE_ROOT"
+  echo "RUNNER_CACHE_PROFILE=$RUNNER_CACHE_PROFILE"
+  echo "RUNNER_STACK_CACHE_ROOT=$RUNNER_STACK_CACHE_ROOT"
+  echo "RUNNER_TOOLS_CACHE_ROOT=$RUNNER_TOOLS_CACHE_ROOT"
   echo "RUNNER_TOOL_CACHE=$RUNNER_TOOL_CACHE"
   echo "AGENT_TOOLSDIRECTORY=$AGENT_TOOLSDIRECTORY"
   echo "XDG_CACHE_HOME=$XDG_CACHE_HOME"
@@ -118,7 +152,7 @@ clean_target() {
     return 0
   fi
 
-  echo "[CLEAN] $target older-than=${OLDER_THAN_DAYS}d path=$path dry-run=$DRY_RUN"
+  echo "[CLEAN] $target profile=${RUNNER_CACHE_PROFILE} older-than=${OLDER_THAN_DAYS}d path=$path dry-run=$DRY_RUN"
 
   if [[ "$DRY_RUN" -eq 1 ]]; then
     find "$path" -type f -mtime "+$OLDER_THAN_DAYS" -print
@@ -129,16 +163,24 @@ clean_target() {
 }
 
 ACTION="${1:-status}"
-TARGET="${2:-all}"
-shift $(( $# > 0 ? 1 : 0 )) || true
-if [[ $# -gt 0 && "$TARGET" != --* ]]; then
-  shift || true
-else
-  TARGET="all"
+TARGET="all"
+
+if [[ $# -gt 0 ]]; then
+  shift
+fi
+
+if [[ $# -gt 0 && "$1" != --* ]]; then
+  TARGET="$1"
+  shift
 fi
 
 while (($#)); do
   case "$1" in
+    --profile)
+      CACHE_PROFILE="${2:-}"
+      [[ -n "$CACHE_PROFILE" ]] || die "--profile exige valor"
+      shift 2
+      ;;
     --older-than)
       OLDER_THAN_DAYS="${2:-}"
       [[ "$OLDER_THAN_DAYS" =~ ^[0-9]+$ ]] || die "--older-than exige numero de dias"
@@ -168,6 +210,9 @@ source_cache_env
 case "$ACTION" in
   status)
     print_status
+    ;;
+  profiles)
+    print_profiles
     ;;
   doctor)
     doctor
