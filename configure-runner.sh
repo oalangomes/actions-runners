@@ -8,6 +8,8 @@ LABELS="local-runner"
 RUNNER_TAR="actions-runner-linux-x64-2.335.1.tar.gz"
 EXPECTED_SHA256="4ef2f25285f0ae4477f1fe1e346db76d2f3ebf03824e2ddd1973a2819bf6c8cf"
 WORK_FOLDER="_work"
+PROFILE="auto"
+ENABLED="true"
 REPLACE=0
 
 usage() {
@@ -19,12 +21,19 @@ Opcoes:
   --github-line VALUE   linha copiada do GitHub com --url e --token
   --name VALUE          nome local do runner/pasta
   --labels VALUE        labels do runner
+  --profile VALUE       perfil tecnico: auto, generic, node, python, flutter, android, java, dotnet, go
+  --enabled VALUE       true/false no runners.conf
   --base-dir VALUE      diretorio base dos runners
   --runner-tar VALUE    arquivo .tar.gz do GitHub Actions Runner
   --expected-sha256 V   checksum esperado do tarball
   --work-folder VALUE   pasta de work do runner
   --replace             recria runner existente e usa --replace no config.sh
   -h, --help            mostra ajuda
+
+Exemplo:
+  ./configure-runner.sh \
+    --github-line "./config.sh --url https://github.com/oalangomes/neurotrack-app --token TOKEN" \
+    --labels "flutter,android,neurotrack-app,alan-runner"
 EOF
 }
 
@@ -42,6 +51,26 @@ repo_name() {
   basename "$repo_url" | tr '[:upper:]' '[:lower:]'
 }
 
+repo_full_name() {
+  local repo_url="${1%/}"
+  local path_part
+
+  path_part="${repo_url#https://github.com/}"
+  path_part="${path_part#http://github.com/}"
+  path_part="${path_part#git@github.com:}"
+  path_part="${path_part%.git}"
+
+  if [[ "$path_part" == "$repo_url" || "$path_part" != */* ]]; then
+    printf '%s\n' ""
+    return 0
+  fi
+
+  IFS='/' read -r owner repo _ <<< "$path_part"
+  if [[ -n "${owner:-}" && -n "${repo:-}" ]]; then
+    printf '%s/%s\n' "$owner" "$repo"
+  fi
+}
+
 get_arg_value() {
   local key="$1"
   shift
@@ -57,18 +86,52 @@ get_arg_value() {
   return 1
 }
 
+normalize_bool() {
+  local value="${1,,}"
+  case "$value" in
+    true|1|yes|y|sim) echo "true" ;;
+    false|0|no|n|nao|não) echo "false" ;;
+    *) die "valor booleano invalido: $1" ;;
+  esac
+}
+
+infer_profile() {
+  local name="${1,,}"
+  local labels="${2,,}"
+
+  case "$labels,$name" in
+    *flutter*|*android*) echo "flutter" ;;
+    *node*|*npm*|*pnpm*|*yarn*|*web*) echo "node" ;;
+    *python*|*pytest*|*pip*) echo "python" ;;
+    *java*|*maven*|*gradle*) echo "java" ;;
+    *dotnet*|*.net*|*nuget*) echo "dotnet" ;;
+    *golang*|*go*) echo "go" ;;
+    *) echo "generic" ;;
+  esac
+}
+
+validate_profile() {
+  case "$1" in
+    auto|generic|node|python|flutter|android|java|dotnet|go) ;;
+    *) die "profile invalido: $1" ;;
+  esac
+}
+
 update_runners_conf() {
   local config_path="$1"
   local runner_name="$2"
   local runner_dir="$3"
+  local profile="$4"
+  local repo="$5"
+  local enabled="$6"
   local tmp
 
   mkdir -p "$(dirname "$config_path")"
-  [[ -f "$config_path" ]] || printf '# name|path\n' > "$config_path"
+  [[ -f "$config_path" ]] || printf '# name|path|profile|repo|enabled\n' > "$config_path"
 
   tmp="$(mktemp)"
   awk -F '|' -v runner_name="$runner_name" '$1 != runner_name' "$config_path" > "$tmp"
-  printf '%s|%s\n' "$runner_name" "$runner_dir" >> "$tmp"
+  printf '%s|%s|%s|%s|%s\n' "$runner_name" "$runner_dir" "$profile" "$repo" "$enabled" >> "$tmp"
   mv "$tmp" "$config_path"
 }
 
@@ -96,6 +159,14 @@ while (($#)); do
       ;;
     --labels)
       LABELS="${2:-}"
+      shift 2
+      ;;
+    --profile)
+      PROFILE="${2:-}"
+      shift 2
+      ;;
+    --enabled)
+      ENABLED="${2:-}"
       shift 2
       ;;
     --base-dir)
@@ -129,6 +200,8 @@ while (($#)); do
 done
 
 [[ -n "$GITHUB_LINE" ]] || die "--github-line e obrigatorio"
+validate_profile "$PROFILE"
+ENABLED="$(normalize_bool "$ENABLED")"
 
 step "Lendo linha copiada do GitHub"
 
@@ -144,6 +217,12 @@ TOKEN="$(get_arg_value --token "${parts[@]}" || true)"
 [[ -n "$TOKEN" ]] || die "nao encontrei --token na linha informada"
 
 [[ -n "$NAME" ]] || NAME="$(repo_name "$REPO_URL")"
+REPO_FULL_NAME="$(repo_full_name "$REPO_URL")"
+[[ -n "$REPO_FULL_NAME" ]] || REPO_FULL_NAME="$REPO_URL"
+
+if [[ "$PROFILE" == "auto" ]]; then
+  PROFILE="$(infer_profile "$NAME" "$LABELS")"
+fi
 
 BASE_DIR="$(realpath -m "$BASE_DIR")"
 TAR_PATH="$BASE_DIR/$RUNNER_TAR"
@@ -156,7 +235,11 @@ MACHINE_NAME="${MACHINE_NAME//[[:space:]]/-}"
 RUNNER_GITHUB_NAME="$MACHINE_NAME-$NAME"
 
 echo "Repo: $REPO_URL"
+echo "Repo full name: $REPO_FULL_NAME"
 echo "Runner local: $NAME"
+echo "Runner GitHub: $RUNNER_GITHUB_NAME"
+echo "Profile: $PROFILE"
+echo "Enabled: $ENABLED"
 echo "Pasta: $RUNNER_DIR"
 echo "Tarball: $TAR_PATH"
 echo "Token: ****"
@@ -189,9 +272,9 @@ fi
 
 step "Atualizando runners.conf"
 
-update_runners_conf "$CONFIG_PATH" "$NAME" "$RUNNER_DIR"
+update_runners_conf "$CONFIG_PATH" "$NAME" "$RUNNER_DIR" "$PROFILE" "$REPO_FULL_NAME" "$ENABLED"
 echo "Atualizado: $CONFIG_PATH"
-echo "$NAME|$RUNNER_DIR"
+echo "$NAME|$RUNNER_DIR|$PROFILE|$REPO_FULL_NAME|$ENABLED"
 
 step "Atualizando .gitignore"
 
@@ -221,6 +304,7 @@ step "Pronto"
 echo "Runner configurado com sucesso."
 echo "Nome no GitHub: $RUNNER_GITHUB_NAME"
 echo "Labels: $LABELS"
+echo "Profile: $PROFILE"
 echo
 echo "Para subir esse runner:"
 echo "  cd $BASE_DIR"
