@@ -157,7 +157,14 @@ rotate_log_if_needed() {
 }
 
 source_cache_env() {
+  local name="$1"
+  local profile="$2"
+  local repo="$3"
+
   if [[ -f "$CACHE_ENV_PATH" ]]; then
+    export LOCAL_RUNNER_NAME="$name"
+    export LOCAL_RUNNER_PROFILE="$profile"
+    export LOCAL_RUNNER_REPO="$repo"
     # shellcheck source=/dev/null
     source "$CACHE_ENV_PATH"
     mkdir -p "${RUNNER_CACHE_ROOT:-$BASE_DIR/.runner-cache}"
@@ -191,12 +198,14 @@ start_runner() {
   mkdir -p "$PID_DIR" "$LOG_DIR"
   file="$(log_file "$name")"
   rotate_log_if_needed "$file"
-  source_cache_env
+  source_cache_env "$name" "$profile" "$repo"
 
   echo "[START] iniciando $name"
   echo "   path: $path"
   echo "   profile: $profile"
   [[ -n "$repo" ]] && echo "   repo: $repo"
+  echo "   cache: ${RUNNER_STACK_CACHE_ROOT:-n/a}"
+  echo "   tools: ${RUNNER_TOOL_CACHE:-n/a}"
   echo "   log: $file"
 
   (
@@ -318,6 +327,8 @@ doctor_runner() {
 
   if [[ -f "$CACHE_ENV_PATH" ]]; then
     echo "[OK] runner-cache-env.sh encontrado"
+    source_cache_env "$name" "$profile" "$repo"
+    echo "[OK] cache profile=$RUNNER_CACHE_PROFILE stack=$RUNNER_STACK_CACHE_ROOT tools=$RUNNER_TOOL_CACHE"
   else
     echo "[WARN] runner-cache-env.sh nao encontrado"
   fi
