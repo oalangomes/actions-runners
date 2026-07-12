@@ -5,6 +5,7 @@ BASE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONFIG_PATH="$BASE_DIR/runners.conf"
 PID_DIR="$BASE_DIR/.runner-pids"
 LOG_DIR="$BASE_DIR/.runner-logs"
+CACHE_ENV_PATH="$BASE_DIR/runner-cache-env.sh"
 
 usage() {
   cat <<'EOF'
@@ -123,6 +124,11 @@ start_runner() {
   fi
 
   mkdir -p "$PID_DIR" "$LOG_DIR"
+  if [[ -f "$CACHE_ENV_PATH" ]]; then
+    # shellcheck source=/dev/null
+    source "$CACHE_ENV_PATH"
+    mkdir -p "$RUNNER_CACHE_ROOT"
+  fi
   echo "[START] iniciando $name"
   echo "   $path"
   echo "   log: $(log_file "$name")"

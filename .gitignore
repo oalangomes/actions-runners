@@ -4,6 +4,7 @@ actions-runner-*.tar.gz
 # Runtime state
 .runner-logs/
 .runner-pids/
+.runner-cache/
 __pycache__/
 
 
@@ -16,4 +17,5 @@ agentsorch/
 /docsneurotrackapp/
 /roboapostas/
 /agentsorch/
+*.conf
 runners.conf

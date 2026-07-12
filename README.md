@@ -48,6 +48,14 @@ Exemplo:
 ./runners.sh logs neurotrack-app
 ```
 
+`runner-cache-env.sh` define caches persistentes compartilhados pelos runners. Ao iniciar um runner com `runners.sh`, o script exporta variaveis para caches de ferramentas baixadas por actions como `actions/setup-node` e para caches de npm, pnpm, yarn, Gradle, Maven/NuGet, pip, Pub/Flutter, Cargo e Go em:
+
+```text
+/home/alangomes/actions-runners/.runner-cache/
+```
+
+Isso reduz downloads repetidos entre jobs, sem depender da pasta `_work` do runner.
+
 `runners.conf` guarda os runners conhecidos:
 
 ```properties
