@@ -1,0 +1,105 @@
+# Template: Smart Runner Router
+#
+# Labels:
+# - Self --force: força self-hosted
+# - Self: tenta self-hosted se houver runner online/livre; senão cai para GitHub-hosted
+# - Self --skip: roda direto no GitHub-hosted
+# - sem label: default Self --force
+#
+# Requer secret opcional ACTIONS_ADMIN_READ_TOKEN com Administration: read para checar runners.
+# Sem esse token, o modo "Self" cai para GitHub-hosted por segurança.
+
+name: Smart Runner CI
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+  workflow_dispatch:
+    inputs:
+      runner_mode:
+        description: Runner mode
+        required: false
+        default: default
+        type: choice
+        options:
+          - default
+          - self-force
+          - self
+          - self-skip
+
+permissions:
+  contents: read
+
+jobs:
+  route:
+    runs-on: ubuntu-latest
+    outputs:
+      runs_on: ${{ steps.pick.outputs.runs_on }}
+      mode: ${{ steps.pick.outputs.mode }}
+    steps:
+      - name: Pick runner
+        id: pick
+        env:
+          GH_TOKEN: ${{ secrets.ACTIONS_ADMIN_READ_TOKEN }}
+          REPO: ${{ github.repository }}
+          INPUT_MODE: ${{ github.event.inputs.runner_mode || 'default' }}
+          HAS_SELF_FORCE: ${{ contains(github.event.pull_request.labels.*.name, 'Self --force') }}
+          HAS_SELF: ${{ contains(github.event.pull_request.labels.*.name, 'Self') }}
+          HAS_SELF_SKIP: ${{ contains(github.event.pull_request.labels.*.name, 'Self --skip') }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          SELF_RUNNER='["self-hosted","linux","x64","alan-runner"]'
+          GITHUB_RUNNER='"ubuntu-latest"'
+
+          select_runner() {
+            echo "runs_on=$1" >> "$GITHUB_OUTPUT"
+            echo "mode=$2" >> "$GITHUB_OUTPUT"
+          }
+
+          if [[ "$INPUT_MODE" == "self-force" ]]; then
+            select_runner "$SELF_RUNNER" "self-force-manual"
+            exit 0
+          fi
+
+          if [[ "$INPUT_MODE" == "self-skip" || "$HAS_SELF_SKIP" == "true" ]]; then
+            select_runner "$GITHUB_RUNNER" "github-skip-self"
+            exit 0
+          fi
+
+          if [[ "$HAS_SELF_FORCE" == "true" || "$INPUT_MODE" == "default" && "$HAS_SELF" != "true" ]]; then
+            select_runner "$SELF_RUNNER" "self-force"
+            exit 0
+          fi
+
+          if [[ "$INPUT_MODE" == "self" || "$HAS_SELF" == "true" ]]; then
+            if [[ -z "${GH_TOKEN:-}" ]]; then
+              select_runner "$GITHUB_RUNNER" "github-fallback-no-token"
+              exit 0
+            fi
+
+            available="$(
+              gh api "repos/$REPO/actions/runners" --paginate |
+                jq -r '[.runners[] | select(.status == "online") | select(.busy == false) | select([.labels[].name] | contains(["self-hosted","linux","x64","alan-runner"]))] | length'
+            )"
+
+            if [[ "$available" -gt 0 ]]; then
+              select_runner "$SELF_RUNNER" "self-available"
+            else
+              select_runner "$GITHUB_RUNNER" "github-fallback-self-unavailable"
+            fi
+            exit 0
+          fi
+
+          select_runner "$SELF_RUNNER" "self-force-default"
+
+  test:
+    needs: route
+    runs-on: ${{ fromJSON(needs.route.outputs.runs_on) }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Show selected runner
+        run: echo "selected=${{ needs.route.outputs.mode }} runner=${{ runner.name }}"
+      - name: Replace with project checks
+        run: echo "Coloque aqui lint/test/build do repo"
