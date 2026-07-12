@@ -30,11 +30,12 @@ A ideia é usar uma máquina Linux para rodar jobs pesados — testes, builds Fl
 │       ├── node/
 │       └── python/
 ├── agentsorch/
+├── agentsorch-2/
 ├── neurotrack-web/
 └── neurotrack-app/
 ```
 
-Cada subpasta de repo representa um runner registrado no GitHub. Os caches ficam fora do `_work` dos runners.
+Cada subpasta representa **uma instância registrada** de runner no GitHub. Os caches ficam fora do `_work` dos runners.
 
 ---
 
@@ -99,6 +100,76 @@ Se quiser sobrescrever manualmente:
 
 ---
 
+## Múltiplos runners do mesmo repo
+
+Para ter paralelismo, registre mais de um runner no GitHub, cada um com um token novo e uma pasta própria.
+
+O `configure-runner.sh` agora auto-incrementa o nome local quando não usa `--replace`.
+
+### Primeira configuração
+
+```bash
+./configure-runner.sh \
+  --github-line "./config.sh --url https://github.com/oalangomes/agentsorch --token TOKEN_1" \
+  --labels "python,agentsorch,alan-runner" \
+  --profile python
+```
+
+Resultado:
+
+```properties
+agentsorch|/home/alangomes/actions-runners/agentsorch|python|oalangomes/agentsorch|true
+```
+
+### Segunda configuração do mesmo repo
+
+Gere outro token em `Settings → Actions → Runners → New self-hosted runner` e rode o mesmo comando com o novo token:
+
+```bash
+./configure-runner.sh \
+  --github-line "./config.sh --url https://github.com/oalangomes/agentsorch --token TOKEN_2" \
+  --labels "python,agentsorch,alan-runner" \
+  --profile python
+```
+
+Como `agentsorch` já existe, o script cria automaticamente:
+
+```properties
+agentsorch-2|/home/alangomes/actions-runners/agentsorch-2|python|oalangomes/agentsorch|true
+```
+
+O nome no GitHub fica baseado no hostname da máquina:
+
+```text
+AlanGomes-PC-agentsorch
+AlanGomes-PC-agentsorch-2
+```
+
+### Terceira configuração
+
+A próxima repetição vira:
+
+```properties
+agentsorch-3|/home/alangomes/actions-runners/agentsorch-3|python|oalangomes/agentsorch|true
+```
+
+### Quando usar `--replace`
+
+Use `--replace` somente para recriar **o mesmo runner**:
+
+```bash
+./configure-runner.sh \
+  --github-line "./config.sh --url https://github.com/oalangomes/agentsorch --token TOKEN" \
+  --name agentsorch \
+  --labels "python,agentsorch,alan-runner" \
+  --profile python \
+  --replace
+```
+
+Sem `--replace`, o script preserva o runner existente e cria o próximo nome livre.
+
+---
+
 ## `runners.conf`
 
 Formato atual:
@@ -108,6 +179,7 @@ Formato atual:
 neurotrack-app|/home/alangomes/actions-runners/neurotrack-app|flutter|oalangomes/neurotrack-app|true
 neurotrack-web|/home/alangomes/actions-runners/neurotrack-web|node|oalangomes/neurotrack-web|true
 agentsorch|/home/alangomes/actions-runners/agentsorch|python|oalangomes/agentsorch|true
+agentsorch-2|/home/alangomes/actions-runners/agentsorch-2|python|oalangomes/agentsorch|true
 ```
 
 Na prática, você **não precisa editar isso na mão**. O `configure-runner.sh` preenche.
@@ -251,7 +323,8 @@ Isso evita misturar cache de Flutter com Node/Python, sem colocar cache dentro d
 ```bash
 ./runners.sh status
 ./runners.sh start all
-./runners.sh start neurotrack-app
+./runners.sh start agentsorch
+./runners.sh start agentsorch-2
 ./runners.sh stop all
 ./runners.sh restart neurotrack-web
 ./runners.sh list
@@ -486,9 +559,10 @@ O `restart` agora tenta parar o process group inteiro e arquiva `_diag/pages` an
 
 ```text
 1. Configurar runner com configure-runner.sh
-2. Aquecer cache com prewarm-cache.sh
-3. Subir runner com runners.sh
-4. Acompanhar pelo dashboard.py
-5. Usar templates de workflow nos repos alvo
-6. Monitorar alertas/cache com runners.sh health e cache.sh status
+2. Repetir configure-runner.sh com novo token para criar runners -2, -3 quando precisar de paralelismo
+3. Aquecer cache com prewarm-cache.sh
+4. Subir runners com runners.sh
+5. Acompanhar pelo dashboard.py
+6. Usar templates de workflow nos repos alvo
+7. Monitorar alertas/cache com runners.sh health e cache.sh status
 ```
