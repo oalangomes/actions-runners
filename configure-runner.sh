@@ -19,7 +19,7 @@ Uso:
 
 Opcoes:
   --github-line VALUE   linha copiada do GitHub com --url e --token
-  --name VALUE          nome local do runner/pasta
+  --name VALUE          nome base local do runner/pasta
   --labels VALUE        labels do runner
   --profile VALUE       perfil tecnico: auto, generic, node, python, flutter, android, java, dotnet, go
   --enabled VALUE       true/false no runners.conf
@@ -30,10 +30,12 @@ Opcoes:
   --replace             recria runner existente e usa --replace no config.sh
   -h, --help            mostra ajuda
 
-Exemplo:
+Exemplos:
   ./configure-runner.sh \
     --github-line "./config.sh --url https://github.com/oalangomes/neurotrack-app --token TOKEN" \
     --labels "flutter,android,neurotrack-app,alan-runner"
+
+  # Se neurotrack-app ja existir, uma nova execucao sem --replace vira neurotrack-app-2.
 EOF
 }
 
@@ -115,6 +117,37 @@ validate_profile() {
     auto|generic|node|python|flutter|android|java|dotnet|go) ;;
     *) die "profile invalido: $1" ;;
   esac
+}
+
+runner_name_exists() {
+  local config_path="$1"
+  local base_dir="$2"
+  local runner_name="$3"
+
+  if [[ -f "$config_path" ]] && awk -F '|' -v runner_name="$runner_name" '$1 == runner_name { found=1 } END { exit(found ? 0 : 1) }' "$config_path"; then
+    return 0
+  fi
+
+  [[ -e "$base_dir/$runner_name" ]]
+}
+
+next_available_runner_name() {
+  local config_path="$1"
+  local base_dir="$2"
+  local requested_name="$3"
+  local candidate="$requested_name"
+  local index=2
+
+  if ! runner_name_exists "$config_path" "$base_dir" "$candidate"; then
+    printf '%s\n' "$candidate"
+    return 0
+  fi
+
+  while runner_name_exists "$config_path" "$base_dir" "${requested_name}-${index}"; do
+    index=$((index + 1))
+  done
+
+  printf '%s\n' "${requested_name}-${index}"
 }
 
 update_runners_conf() {
@@ -217,18 +250,24 @@ TOKEN="$(get_arg_value --token "${parts[@]}" || true)"
 [[ -n "$TOKEN" ]] || die "nao encontrei --token na linha informada"
 
 [[ -n "$NAME" ]] || NAME="$(repo_name "$REPO_URL")"
+REQUESTED_NAME="$NAME"
 REPO_FULL_NAME="$(repo_full_name "$REPO_URL")"
 [[ -n "$REPO_FULL_NAME" ]] || REPO_FULL_NAME="$REPO_URL"
 
 if [[ "$PROFILE" == "auto" ]]; then
-  PROFILE="$(infer_profile "$NAME" "$LABELS")"
+  PROFILE="$(infer_profile "$REQUESTED_NAME" "$LABELS")"
 fi
 
 BASE_DIR="$(realpath -m "$BASE_DIR")"
 TAR_PATH="$BASE_DIR/$RUNNER_TAR"
-RUNNER_DIR="$BASE_DIR/$NAME"
 CONFIG_PATH="$BASE_DIR/runners.conf"
 GITIGNORE_PATH="$BASE_DIR/.gitignore"
+
+if [[ "$REPLACE" -eq 0 ]]; then
+  NAME="$(next_available_runner_name "$CONFIG_PATH" "$BASE_DIR" "$REQUESTED_NAME")"
+fi
+
+RUNNER_DIR="$BASE_DIR/$NAME"
 MACHINE_NAME="$(hostname -s 2>/dev/null || hostname 2>/dev/null || true)"
 MACHINE_NAME="${MACHINE_NAME//[[:space:]]/-}"
 [[ -n "$MACHINE_NAME" ]] || die "nao foi possivel identificar o nome da maquina"
@@ -236,7 +275,12 @@ RUNNER_GITHUB_NAME="$MACHINE_NAME-$NAME"
 
 echo "Repo: $REPO_URL"
 echo "Repo full name: $REPO_FULL_NAME"
-echo "Runner local: $NAME"
+echo "Runner base: $REQUESTED_NAME"
+if [[ "$NAME" != "$REQUESTED_NAME" ]]; then
+  echo "Runner local: $NAME (auto-incrementado; $REQUESTED_NAME ja existia)"
+else
+  echo "Runner local: $NAME"
+fi
 echo "Runner GitHub: $RUNNER_GITHUB_NAME"
 echo "Profile: $PROFILE"
 echo "Enabled: $ENABLED"
@@ -303,6 +347,7 @@ step "Pronto"
 
 echo "Runner configurado com sucesso."
 echo "Nome no GitHub: $RUNNER_GITHUB_NAME"
+echo "Nome local: $NAME"
 echo "Labels: $LABELS"
 echo "Profile: $PROFILE"
 echo
