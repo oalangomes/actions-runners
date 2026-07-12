@@ -6,7 +6,9 @@ actions-runner-*.tar.gz
 .runner-pids/
 .runner-cache/
 __pycache__/
-
+*.pyc
+*.tmp
+*.log
 
 # Local runner folders are added by configure-runner.sh as /<name>/
 agentsorch/
@@ -17,5 +19,7 @@ agentsorch/
 /docsneurotrackapp/
 /roboapostas/
 /agentsorch/
+
+# Local generated config
 *.conf
 runners.conf
