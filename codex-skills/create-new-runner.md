@@ -9,6 +9,7 @@ Criar uma nova instância de runner sem sobrescrever runners existentes, mantend
 - uma pasta por runner;
 - um registro por runner no GitHub;
 - labels específicas por repo/stack;
+- uma label exclusiva igual ao identificador final da instância;
 - caches fora do `_work`;
 - `runners.conf` atualizado pelo script oficial.
 
@@ -30,6 +31,37 @@ Errado:
 /home/alangomes/actions-runners/agentsorch
 ├── runner 1
 └── runner 2
+```
+
+## Identificador e label obrigatória
+
+O identificador local final deve ser registrado também como label exclusiva do runner.
+
+Exemplos:
+
+```text
+nome local: agentsorch
+label obrigatória: agentsorch
+
+nome local: agentsorch-2
+label obrigatória: agentsorch-2
+
+nome local: neurotrack_ms-2
+label obrigatória: neurotrack_ms-2
+```
+
+O `configure-runner.sh` adiciona essa label automaticamente depois de resolver o próximo nome livre. Não peça ao usuário para repeti-la em `--labels`.
+
+As labels base continuam sendo informadas normalmente:
+
+```text
+python,agentsorch,alan-runner
+```
+
+E o resultado enviado ao GitHub fica:
+
+```text
+python,agentsorch,alan-runner,agentsorch-2
 ```
 
 ## Pré-requisitos
@@ -76,30 +108,40 @@ cat runners.conf
 4. Se o nome base já existir, o script deve auto-incrementar:
 
 ```text
-agentsorch      → primeiro runner
-agentsorch-2    → segundo runner
-agentsorch-3    → terceiro runner
+agentsorch      → primeiro runner e label agentsorch
+agentsorch-2    → segundo runner e label agentsorch-2
+agentsorch-3    → terceiro runner e label agentsorch-3
 ```
 
-5. Validar estrutura:
+5. Conferir no output do script:
+
+```text
+Runner local: agentsorch-2
+Instance label: agentsorch-2
+Labels: python,agentsorch,alan-runner,agentsorch-2
+```
+
+6. Validar estrutura:
 
 ```bash
 ./runners.sh doctor agentsorch-2
 ./runners.sh health agentsorch-2
 ```
 
-6. Subir o runner:
+7. Subir o runner:
 
 ```bash
 ./runners.sh start agentsorch-2
 ```
 
-7. Confirmar status:
+8. Confirmar status:
 
 ```bash
 ./runners.sh status
 ./runners.sh logs agentsorch-2
 ```
+
+9. Confirmar em `Settings → Actions → Runners` que o runner registrado possui a label exclusiva da instância.
 
 ## Quando usar `--replace`
 
@@ -144,12 +186,16 @@ node,web,neurotrack-web,alan-runner
 flutter,android,neurotrack-app,alan-runner
 ```
 
+A label da instância é acrescentada automaticamente a qualquer conjunto acima.
+
 ## Critérios de sucesso
 
 Ao final, informe somente:
 
 - nome local do runner;
 - nome registrado no GitHub;
+- label exclusiva da instância;
+- conjunto final de labels;
 - pasta criada;
 - linha adicionada ao `runners.conf`;
 - status do runner;
@@ -160,6 +206,7 @@ Ao final, informe somente:
 - Não registrar runner sem token novo fornecido pelo usuário.
 - Não sobrescrever pasta existente sem `--replace` explícito.
 - Não editar `runners.conf` manualmente se `configure-runner.sh` puder fazer isso.
+- Não remover a label exclusiva igual ao identificador final do runner.
 - Não mover caches para dentro de `_work`.
 - Não iniciar dois processos na mesma pasta de runner.
 - Não afirmar que o runner está online sem validar com `runners.sh status` ou evidência equivalente.
