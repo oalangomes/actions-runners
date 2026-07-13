@@ -1,17 +1,19 @@
 # GitHub Actions Local Runners
 
-Setup **Linux-first** para executar GitHub Actions em runners self-hosted locais.
+Central Linux para operar múltiplos GitHub Actions self-hosted runners com:
 
-A ideia é usar uma máquina Linux para rodar jobs pesados — testes, builds Flutter/Android, Node/Web, Python e automações — reduzindo consumo de minutos/budget do GitHub Actions, sem perder o fluxo de PR/checks.
-
----
+- múltiplos runners por repositório;
+- grupos operacionais por domínio;
+- cache persistente fora de `_work`;
+- start, stop, restart, health e doctor;
+- proteção contra processos duplicados;
+- painel local com métricas e recomendações;
+- skills operacionais para Codex.
 
 ## Estrutura
 
 ```text
 /home/alangomes/actions-runners/
-├── README.md
-├── actions-runner-linux-x64-2.335.1.tar.gz
 ├── configure-runner.sh
 ├── runners.sh
 ├── runner-cache-env.sh
@@ -19,260 +21,161 @@ A ideia é usar uma máquina Linux para rodar jobs pesados — testes, builds Fl
 ├── prewarm-cache.sh
 ├── dashboard.py
 ├── runners.conf
+├── codex-skills/
+├── docs/
 ├── templates/
+├── .runner-cache/
 ├── .runner-logs/
 ├── .runner-pids/
-├── .runner-cache/
-│   ├── tools/
-│   ├── shared/
-│   └── stacks/
-│       ├── flutter/
-│       ├── node/
-│       └── python/
 ├── agentsorch/
 ├── agentsorch-2/
-├── neurotrack-web/
-└── neurotrack-app/
+├── neurotrack_ms/
+└── neurotrack_ms-2/
 ```
 
-Cada subpasta representa **uma instância registrada** de runner no GitHub. Os caches ficam fora do `_work` dos runners.
+Cada pasta de runner representa uma instância registrada separadamente no GitHub.
 
----
+## Configurar um runner
 
-## Scripts principais
-
-| Script | Função |
-|---|---|
-| `configure-runner.sh` | cria pasta, extrai o tarball, registra runner no GitHub e atualiza `runners.conf` |
-| `runners.sh` | start/stop/restart/status/list/doctor/health/logs dos runners |
-| `runner-cache-env.sh` | exporta caches persistentes por profile/stack fora do `_work` |
-| `cache.sh` | mostra status e limpa caches/logs com `--dry-run` |
-| `prewarm-cache.sh` | aquece caches e valida stacks antes dos workflows |
-| `dashboard.py` | painel local com status, logs, saúde, cache e alertas |
-
----
-
-## Configuração simples de runner
-
-No GitHub:
+No repositório de destino:
 
 ```text
 Settings → Actions → Runners → New self-hosted runner → Linux → x64
 ```
 
-Copie a linha gerada:
-
-```bash
-./config.sh --url https://github.com/oalangomes/neurotrack-app --token TOKEN_GERADO_PELO_GITHUB
-```
-
-Execute:
+Copie a linha com URL e token e execute:
 
 ```bash
 cd /home/alangomes/actions-runners
-chmod +x configure-runner.sh runners.sh cache.sh prewarm-cache.sh dashboard.py
 
-./configure-runner.sh \
-  --github-line "./config.sh --url https://github.com/oalangomes/neurotrack-app --token TOKEN_GERADO_PELO_GITHUB" \
-  --labels "flutter,android,neurotrack-app,alan-runner"
-```
-
-Esse continua sendo o fluxo simples. O script infere o `profile` automaticamente a partir das labels/nome:
-
-| Labels/nome | Profile inferido |
-|---|---|
-| `flutter`, `android` | `flutter` |
-| `node`, `npm`, `pnpm`, `web` | `node` |
-| `python`, `pytest`, `pip` | `python` |
-| `java`, `maven`, `gradle` | `java` |
-| `dotnet`, `nuget` | `dotnet` |
-| `go`, `golang` | `go` |
-| sem correspondência | `generic` |
-
-Se quiser sobrescrever manualmente:
-
-```bash
 ./configure-runner.sh \
   --github-line "./config.sh --url https://github.com/oalangomes/agentsorch --token TOKEN" \
-  --labels "python,node,agentsorch,alan-runner" \
+  --labels "python,agentsorch,alan-runner" \
   --profile python
 ```
 
----
+O grupo é inferido automaticamente:
+
+| Repo/nome | Grupo |
+|---|---|
+| contém `agentsorch` | `agentsorch` |
+| contém `neurotrack` | `neurotrack` |
+| contém `ea-fc` ou `sheffield` | `ea-fc` |
+| contém `roboapostas` ou `apostas` | `roboapostas` |
+
+Também pode ser informado explicitamente:
+
+```bash
+./configure-runner.sh \
+  --github-line "./config.sh --url https://github.com/oalangomes/NeuroTrack_MS --token TOKEN" \
+  --labels "node,neurotrack-ms,alan-runner" \
+  --profile node \
+  --group neurotrack
+```
 
 ## Múltiplos runners do mesmo repo
 
-Para ter paralelismo, registre mais de um runner no GitHub, cada um com um token novo e uma pasta própria.
-
-O `configure-runner.sh` agora auto-incrementa o nome local quando não usa `--replace`.
-
-### Primeira configuração
-
-```bash
-./configure-runner.sh \
-  --github-line "./config.sh --url https://github.com/oalangomes/agentsorch --token TOKEN_1" \
-  --labels "python,agentsorch,alan-runner" \
-  --profile python
-```
-
-Resultado:
-
-```properties
-agentsorch|/home/alangomes/actions-runners/agentsorch|python|oalangomes/agentsorch|true
-```
-
-### Segunda configuração do mesmo repo
-
-Gere outro token em `Settings → Actions → Runners → New self-hosted runner` e rode o mesmo comando com o novo token:
-
-```bash
-./configure-runner.sh \
-  --github-line "./config.sh --url https://github.com/oalangomes/agentsorch --token TOKEN_2" \
-  --labels "python,agentsorch,alan-runner" \
-  --profile python
-```
-
-Como `agentsorch` já existe, o script cria automaticamente:
-
-```properties
-agentsorch-2|/home/alangomes/actions-runners/agentsorch-2|python|oalangomes/agentsorch|true
-```
-
-O nome no GitHub fica baseado no hostname da máquina:
+A primeira execução cria:
 
 ```text
+agentsorch/
 AlanGomes-PC-agentsorch
+```
+
+A segunda execução, usando um token novo, cria automaticamente:
+
+```text
+agentsorch-2/
 AlanGomes-PC-agentsorch-2
 ```
 
-### Terceira configuração
+A terceira cria `agentsorch-3`, e assim por diante.
 
-A próxima repetição vira:
+Sem `--replace`, runners existentes são preservados. Use `--replace` somente para recriar explicitamente o mesmo runner.
 
-```properties
-agentsorch-3|/home/alangomes/actions-runners/agentsorch-3|python|oalangomes/agentsorch|true
+## Gitignore de runners numerados
+
+Ao configurar um runner, o script adiciona:
+
+```gitignore
+/agentsorch/
+/agentsorch-[0-9]*/
 ```
 
-### Quando usar `--replace`
+Assim, `agentsorch-2`, `agentsorch-3` e próximos runners não aparecem como conteúdo versionável.
 
-Use `--replace` somente para recriar **o mesmo runner**:
+Se uma pasta já tiver sido adicionada ao índice antes da regra, remova apenas do índice:
 
 ```bash
-./configure-runner.sh \
-  --github-line "./config.sh --url https://github.com/oalangomes/agentsorch --token TOKEN" \
-  --name agentsorch \
-  --labels "python,agentsorch,alan-runner" \
-  --profile python \
-  --replace
+git rm -r --cached agentsorch-2
 ```
 
-Sem `--replace`, o script preserva o runner existente e cria o próximo nome livre.
-
----
+Não apague a pasta física do runner.
 
 ## `runners.conf`
 
 Formato atual:
 
 ```properties
-# name|path|profile|repo|enabled
-neurotrack-app|/home/alangomes/actions-runners/neurotrack-app|flutter|oalangomes/neurotrack-app|true
-neurotrack-web|/home/alangomes/actions-runners/neurotrack-web|node|oalangomes/neurotrack-web|true
-agentsorch|/home/alangomes/actions-runners/agentsorch|python|oalangomes/agentsorch|true
-agentsorch-2|/home/alangomes/actions-runners/agentsorch-2|python|oalangomes/agentsorch|true
+# name|path|profile|repo|enabled|group
+agentsorch|/home/alangomes/actions-runners/agentsorch|python|oalangomes/agentsorch|true|agentsorch
+agentsorch-2|/home/alangomes/actions-runners/agentsorch-2|python|oalangomes/agentsorch|true|agentsorch
+neurotrack_ms|/home/alangomes/actions-runners/neurotrack_ms|node|oalangomes/NeuroTrack_MS|true|neurotrack
 ```
 
-Na prática, você **não precisa editar isso na mão**. O `configure-runner.sh` preenche.
+Linhas antigas sem a sexta coluna continuam funcionando; o grupo é inferido pelo nome e repositório.
 
-Formato antigo também funciona:
-
-```properties
-neurotrack-app|/home/alangomes/actions-runners/neurotrack-app
-```
-
-Nesse caso, o perfil vira `generic`, repo fica vazio e `enabled=true`.
-
----
-
-## Como fica a config de cada runner de repo?
-
-Simples como antes.
-
-### Neurotrack App
+## Operar runners individuais
 
 ```bash
-./configure-runner.sh \
-  --github-line "./config.sh --url https://github.com/oalangomes/neurotrack-app --token TOKEN" \
-  --labels "flutter,android,neurotrack-app,alan-runner"
+./runners.sh start agentsorch
+./runners.sh stop agentsorch-2
+./runners.sh restart neurotrack_ms
+./runners.sh status agentsorch
+./runners.sh doctor agentsorch
+./runners.sh health agentsorch
+./runners.sh logs agentsorch
 ```
 
-Resultado no `runners.conf`:
+## Operar por grupos
 
-```properties
-neurotrack-app|/home/alangomes/actions-runners/neurotrack-app|flutter|oalangomes/neurotrack-app|true
-```
-
-Cache usado:
-
-```text
-/home/alangomes/actions-runners/.runner-cache/stacks/flutter/
-```
-
-### NeuroTrack Web
+Listar grupos e capacidade:
 
 ```bash
-./configure-runner.sh \
-  --github-line "./config.sh --url https://github.com/oalangomes/neurotrack-web --token TOKEN" \
-  --labels "node,web,neurotrack-web,alan-runner"
+./runners.sh groups
 ```
 
-Resultado:
-
-```properties
-neurotrack-web|/home/alangomes/actions-runners/neurotrack-web|node|oalangomes/neurotrack-web|true
-```
-
-Cache usado:
-
-```text
-/home/alangomes/actions-runners/.runner-cache/stacks/node/
-```
-
-### AgentsOrch
+Subir todos os runners do NeuroTrack:
 
 ```bash
-./configure-runner.sh \
-  --github-line "./config.sh --url https://github.com/oalangomes/agentsorch --token TOKEN" \
-  --labels "python,node,agentsorch,alan-runner" \
-  --profile python
+./runners.sh start group:neurotrack
 ```
 
-Resultado:
+Outros exemplos:
 
-```properties
-agentsorch|/home/alangomes/actions-runners/agentsorch|python|oalangomes/agentsorch|true
+```bash
+./runners.sh restart group:agentsorch
+./runners.sh stop group:ea-fc
+./runners.sh health group:roboapostas
+./runners.sh status group:neurotrack
 ```
 
-Cache usado:
+Operar tudo:
 
-```text
-/home/alangomes/actions-runners/.runner-cache/stacks/python/
+```bash
+./runners.sh start all
+./runners.sh stop all
+./runners.sh status all
 ```
-
----
 
 ## Cache persistente
 
-O `_work` continua sendo apenas workspace do GitHub Runner:
+O `_work` continua sendo workspace descartável do runner.
+
+Caches duráveis ficam em:
 
 ```text
-/home/alangomes/actions-runners/neurotrack-app/_work/
-```
-
-Os caches duráveis ficam fora dele:
-
-```text
-/home/alangomes/actions-runners/.runner-cache/
+.runner-cache/
 ├── tools/
 │   └── tool-cache/
 ├── shared/
@@ -285,162 +188,28 @@ Os caches duráveis ficam fora dele:
     └── dotnet/
 ```
 
-### O que fica compartilhado
-
-```text
-.runner-cache/tools/tool-cache/
-```
-
-Usado por:
-
-- `RUNNER_TOOL_CACHE`
-- `AGENT_TOOLSDIRECTORY`
-- actions de setup de ferramentas
-
-### O que fica por profile/stack
-
-```text
-.runner-cache/stacks/<profile>/
-```
-
-Usado por:
-
-- npm, pnpm, yarn;
-- Gradle e Maven;
-- pip e pipx;
-- Pub/Flutter;
-- Cargo/Rust;
-- Go;
-- .NET/NuGet;
-- Playwright.
-
-Isso evita misturar cache de Flutter com Node/Python, sem colocar cache dentro do `_work`.
-
----
-
-## Operar runners
-
-```bash
-./runners.sh status
-./runners.sh start all
-./runners.sh start agentsorch
-./runners.sh start agentsorch-2
-./runners.sh stop all
-./runners.sh restart neurotrack-web
-./runners.sh list
-./runners.sh logs all
-```
-
-Validação por estrutura e stack:
-
-```bash
-./runners.sh doctor all
-```
-
-Alertas rápidos:
-
-```bash
-./runners.sh health all
-```
-
----
-
-## Proteção contra runner duplicado e erro `_diag/pages already exists`
-
-O `runners.sh` evita iniciar uma segunda instância do mesmo runner quando ainda existe `run.sh`, `Runner.Listener` ou `Runner.Worker` vivo no diretório do runner.
-
-Também inicia o runner em um process group próprio com `setsid` quando disponível. Assim, `stop` e `restart` encerram o grupo inteiro, não apenas o shell pai.
-
-Antes de um novo start, se o runner estiver parado, o script arquiva arquivos antigos de:
-
-```text
-<runner>/_diag/pages/
-```
-
-em:
-
-```text
-<runner>/_diag/pages.archive.YYYYMMDDHHMMSS/
-```
-
-Isso reduz colisões como:
-
-```text
-The file '<runner>/_diag/pages/<id>.log' already exists.
-```
-
-Comandos úteis:
-
-```bash
-./runners.sh health agentsorch
-./runners.sh stop agentsorch
-./runners.sh start agentsorch
-```
-
-Se quiser desativar o arquivamento automático de `_diag/pages`:
-
-```bash
-RUNNER_ARCHIVE_DIAG_PAGES_ON_START=0 ./runners.sh start agentsorch
-```
-
----
-
-## Inspecionar e limpar cache
-
-Listar profiles com cache criado:
+Comandos:
 
 ```bash
 ./cache.sh profiles
-```
-
-Status por profile:
-
-```bash
-./cache.sh status --profile flutter
-./cache.sh status --profile node
 ./cache.sh status --profile python
+./cache.sh status --profile node
+./cache.sh status --profile flutter
+./cache.sh clean all --profile python --older-than 30 --dry-run
 ```
 
-Validação por profile:
+Prewarm:
 
 ```bash
-./cache.sh doctor --profile flutter
-```
-
-Limpeza segura:
-
-```bash
-./cache.sh clean all --profile flutter --older-than 30 --dry-run
-./cache.sh clean gradle --profile flutter --older-than 45
-./cache.sh clean logs --older-than 14
-```
-
----
-
-## Aquecer cache/setup
-
-Antes de rodar workflows pesados:
-
-```bash
-./prewarm-cache.sh node
 ./prewarm-cache.sh python
+./prewarm-cache.sh node
 ./prewarm-cache.sh flutter
 ./prewarm-cache.sh all
 ```
 
-Cada stack aquece o cache no profile correto:
+## Painel inteligente
 
-```text
-node    → .runner-cache/stacks/node/
-python  → .runner-cache/stacks/python/
-flutter → .runner-cache/stacks/flutter/
-```
-
----
-
-## Dashboard local
-
-Subir painel:
+Subir:
 
 ```bash
 ./dashboard.py
@@ -454,19 +223,56 @@ http://127.0.0.1:8765
 
 O painel mostra:
 
-- runners rodando/parados/desabilitados;
-- profile, repo, PID e uptime;
-- logs de execução e `_diag`;
-- cards de resumo;
-- cache local por categoria, incluindo `tools`, `shared` e `stack:<profile>`;
-- alertas de runner parado, PID órfão, erro recente em log, disco baixo, cache grande e estrutura incompleta;
-- botões de start/stop/restart.
+- runners agrupados por domínio;
+- start, restart e stop por grupo;
+- filtro de runners por grupo;
+- hostname, uptime, CPUs, load, RAM e disco;
+- score de saúde da central;
+- processos detectados mesmo quando o PID file está stale;
+- alertas de processo duplicado, runner parado, cache grande, RAM e disco;
+- recomendações automáticas de capacidade e paralelismo;
+- logs de execução e diagnóstico;
+- cache por stack.
 
----
+Por padrão, o painel escuta apenas em `127.0.0.1`. Para acesso pela rede privada:
+
+```bash
+RUNNERS_DASHBOARD_HOST=0.0.0.0 ./dashboard.py
+```
+
+Proteja esse acesso com firewall ou VPN privada.
+
+## Proteção contra runner duplicado
+
+O `runners.sh` procura processos ligados à pasta:
+
+```text
+run.sh
+Runner.Listener
+Runner.Worker
+```
+
+Ele evita iniciar outra instância na mesma pasta, encerra o grupo de processos no stop/restart e arquiva `_diag/pages` antes de subir novamente.
+
+Comandos úteis:
+
+```bash
+./runners.sh health all
+./runners.sh restart agentsorch
+```
+
+## Skills do Codex
+
+```text
+codex-skills/
+├── create-new-runner.md
+└── evaluate-runner-logs.md
+```
+
+- `create-new-runner.md`: cria runners sem sobrescrever pastas existentes.
+- `evaluate-runner-logs.md`: identifica hosted/self-hosted, gargalos e melhorias sem alterar workflows sem autorização.
 
 ## Templates de workflow
-
-Modelos em:
 
 ```text
 templates/
@@ -476,93 +282,51 @@ templates/
 └── python-self-hosted.yml
 ```
 
-Copie o template desejado para o repo alvo em:
-
-```text
-.github/workflows/
-```
-
-### Contrato de labels
+Contrato esperado:
 
 | Label | Comportamento |
 |---|---|
 | `Self --force` | força self-hosted |
-| `Self` | tenta self-hosted; se indisponível, usa GitHub-hosted |
-| `Self --skip` | pula self-hosted e usa GitHub-hosted |
-| Sem label | default = `Self --force` |
+| `Self` | tenta self-hosted e usa fallback quando permitido |
+| `Self --skip` | usa GitHub-hosted |
+| sem label | self-hosted por padrão |
 
----
+## Central Ubuntu em notebook
+
+O blueprint para transformar um notebook em central de runners e laboratório doméstico está em:
+
+```text
+docs/notebook-central-blueprint.md
+```
+
+A separação recomendada é:
+
+```text
+host Ubuntu
+├── GitHub runners como serviços do host
+├── Docker Compose para ambientes de teste
+├── volumes persistentes e backups
+├── acesso privado por VPN
+└── PC gamer usado sob demanda para builds pesados
+```
+
+## Validação
+
+```bash
+bash -n configure-runner.sh runners.sh cache.sh prewarm-cache.sh
+python3 -m py_compile dashboard.py
+./runners.sh list
+./runners.sh groups
+./runners.sh doctor all
+./runners.sh health all
+```
 
 ## Segurança
 
-Self-hosted runner executa código do workflow na sua máquina.
-
-Boas práticas:
-
-- não usar para PR externo não confiável;
-- evitar rodar como root;
-- usar labels específicas por repo/stack;
-- manter `permissions: contents: read` nos workflows sempre que possível;
-- deixar builds pesados em `workflow_dispatch` quando fizer sentido;
-- usar `Self --skip` quando precisar garantir feedback pelo GitHub-hosted.
-
----
-
-## Troubleshooting
-
-### `Waiting for a runner to pick up this job...`
-
-```bash
-./runners.sh status
-./runners.sh start neurotrack-app
-```
-
-### Runner parado mas PID existe
-
-```bash
-./runners.sh health all
-./runners.sh restart neurotrack-app
-```
-
-### `_diag/pages/<id>.log already exists`
-
-Causa provável: instância anterior do runner ficou parcialmente viva ou diagnóstico antigo conflitou no restart.
-
-Use:
-
-```bash
-./runners.sh health agentsorch
-./runners.sh restart agentsorch
-```
-
-O `restart` agora tenta parar o process group inteiro e arquiva `_diag/pages` antes de subir novamente.
-
-### Cache grande demais
-
-```bash
-./cache.sh profiles
-./cache.sh status --profile flutter
-./cache.sh clean all --profile flutter --older-than 30 --dry-run
-./cache.sh clean all --profile flutter --older-than 30
-```
-
-### Stack ausente
-
-```bash
-./runners.sh doctor neurotrack-app
-./prewarm-cache.sh flutter
-```
-
----
-
-## Fluxo recomendado
-
-```text
-1. Configurar runner com configure-runner.sh
-2. Repetir configure-runner.sh com novo token para criar runners -2, -3 quando precisar de paralelismo
-3. Aquecer cache com prewarm-cache.sh
-4. Subir runners com runners.sh
-5. Acompanhar pelo dashboard.py
-6. Usar templates de workflow nos repos alvo
-7. Monitorar alertas/cache com runners.sh health e cache.sh status
-```
+- não execute PR externo não confiável em runner persistente;
+- não rode runners como root;
+- use labels específicas por repo e stack;
+- mantenha permissões mínimas no `GITHUB_TOKEN`;
+- não exponha MongoDB, Redis, dashboard ou APIs diretamente à internet;
+- mantenha ambientes de teste em containers separados dos processos dos runners;
+- faça backup de volumes e arquivos de configuração, não de `_work`.
