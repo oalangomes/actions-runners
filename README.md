@@ -54,6 +54,8 @@ cd /home/alangomes/actions-runners
   --profile python
 ```
 
+Em `--labels`, informe somente labels funcionais e de capacidade. Não informe o nome final da instância; essa label é acrescentada automaticamente pelo script.
+
 O grupo é inferido automaticamente:
 
 | Repo/nome | Grupo |
@@ -92,6 +94,24 @@ AlanGomes-PC-agentsorch-2
 A terceira cria `agentsorch-3`, e assim por diante.
 
 Sem `--replace`, runners existentes são preservados. Use `--replace` somente para recriar explicitamente o mesmo runner.
+
+### Label automática da instância
+
+O nome final resolvido pelo script é sempre adicionado automaticamente como label do GitHub Runner.
+
+Exemplo de entrada:
+
+```bash
+--labels "node,neurotrack-ms,alan-runner"
+```
+
+Se o próximo nome livre for `neurotrack_ms-2`, o registro enviado ao GitHub usa:
+
+```text
+node,neurotrack-ms,alan-runner,neurotrack_ms-2
+```
+
+Você não precisa e não deve repetir `neurotrack_ms-2` em `--labels`. O mesmo vale para `agentsorch-2`, `agentsorch-3` e qualquer outro identificador final.
 
 ## Gitignore de runners numerados
 
