@@ -23,6 +23,7 @@ Acoes:
   groups     lista grupos e capacidade
   doctor     valida estrutura e stack por perfil
   health     mostra alertas locais resumidos
+  cache      mostra uso local de cache e workspaces
   logs       mostra caminho do log
   help       mostra ajuda
 
@@ -192,7 +193,13 @@ target_indexes() {
 runner_matching_processes() {
   local path="$1"
   [[ -d "$path" ]] || return 0
-  pgrep -af "$path" 2>/dev/null || true
+  ps -eo pid=,args= |
+    awk -v path="$path" '
+      index($0, path "/") {
+        sub(/^[[:space:]]+/, "", $0)
+        print
+      }
+    '
 }
 
 runner_listener_pids_by_path() {
@@ -306,6 +313,14 @@ source_cache_env() {
   local group="$4"
 
   if [[ -f "$CACHE_ENV_PATH" ]]; then
+    unset RUNNER_CACHE_PROFILE
+    unset RUNNER_STACK_CACHE_ROOT
+    unset XDG_CACHE_HOME
+    unset npm_config_cache NPM_CONFIG_CACHE
+    unset COREPACK_HOME PNPM_HOME PNPM_STORE_PATH YARN_CACHE_FOLDER
+    unset GRADLE_USER_HOME PIP_CACHE_DIR PIPX_HOME PIPX_BIN_DIR
+    unset PUB_CACHE CARGO_HOME GOPATH GOMODCACHE GOCACHE
+    unset DOTNET_CLI_HOME NUGET_PACKAGES COMPOSER_CACHE_DIR PLAYWRIGHT_BROWSERS_PATH
     export LOCAL_RUNNER_NAME="$name"
     export LOCAL_RUNNER_PROFILE="$profile"
     export LOCAL_RUNNER_REPO="$repo"
@@ -484,7 +499,7 @@ status_runner() {
 
 profile_commands() {
   case "$1" in
-    node) echo "git node npm" ;;
+    node|react|javascript) echo "git node npm" ;;
     python) echo "git python3 pip3" ;;
     flutter|android) echo "git java flutter" ;;
     java) echo "git java" ;;
@@ -558,10 +573,11 @@ doctor_runner() {
   return "$ok"
 }
 
-recent_log_has_error() {
+recent_log_has_infra_error() {
   local file="$1"
   [[ -f "$file" ]] || return 1
-  tail -n 200 "$file" | grep -Eiq 'error|fatal|unauthorized|forbidden|denied|failed|cannot|exception|segmentation fault|already exists'
+  tail -n 300 "$file" |
+    grep -Eiq 'Runner connect error|SessionConflictException|Failed to create session|Runner listener exit|HTTP request timed out|unauthorized|forbidden|denied|fatal|segmentation fault'
 }
 
 health_runner() {
@@ -603,12 +619,42 @@ health_runner() {
   if [[ ! -x "$path/run.sh" ]]; then
     echo "[CRITICAL] $name sem run.sh executavel"
   fi
-  if recent_log_has_error "$(log_file "$name")"; then
-    echo "[WARN] $name tem erro recente no log"
+  if recent_log_has_infra_error "$(log_file "$name")"; then
+    echo "[WARN] $name tem erro recente de infraestrutura no log"
   fi
   if [[ "$profile" == "flutter" || "$profile" == "android" ]]; then
     command_exists flutter || echo "[WARN] $name profile=$profile mas flutter nao esta no PATH"
     command_exists java || echo "[WARN] $name profile=$profile mas java nao esta no PATH"
+  fi
+}
+
+cache_runner() {
+  local name="$1"
+  local path="$2"
+  local profile="$3"
+  local repo="$4"
+  local group="$5"
+  local work_dir="$path/_work"
+  local repo_work_dir=""
+
+  source_cache_env "$name" "$profile" "$repo" "$group"
+
+  if [[ -n "$repo" ]]; then
+    repo_work_dir="$work_dir/${repo##*/}/${repo##*/}"
+  fi
+
+  echo
+  echo "Runner: $name"
+  echo "Group:  $group"
+  echo "Profile: $profile -> cache profile=$RUNNER_CACHE_PROFILE"
+  echo "Stack cache: $RUNNER_STACK_CACHE_ROOT"
+  [[ -d "$RUNNER_STACK_CACHE_ROOT" ]] && du -sh "$RUNNER_STACK_CACHE_ROOT" 2>/dev/null | sed 's/^/[SIZE] /'
+  echo "Tool cache:  $RUNNER_TOOL_CACHE"
+  [[ -d "$RUNNER_TOOL_CACHE" ]] && du -sh "$RUNNER_TOOL_CACHE" 2>/dev/null | sed 's/^/[SIZE] /'
+  echo "Workspace:   $work_dir"
+  [[ -d "$work_dir" ]] && du -sh "$work_dir" 2>/dev/null | sed 's/^/[SIZE] /'
+  if [[ -n "$repo_work_dir" && -d "$repo_work_dir/node_modules" ]]; then
+    du -sh "$repo_work_dir/node_modules" 2>/dev/null | sed 's/^/[SIZE] node_modules /'
   fi
 }
 
@@ -658,7 +704,7 @@ if [[ "$ACTION" == "help" || "$ACTION" == "-h" || "$ACTION" == "--help" ]]; then
 fi
 
 case "$ACTION" in
-  start|stop|restart|status|list|groups|doctor|health|logs) ;;
+  start|stop|restart|status|list|groups|doctor|health|cache|logs) ;;
   *) die "acao desconhecida: $ACTION" ;;
 esac
 
@@ -707,6 +753,11 @@ case "$ACTION" in
   health)
     for i in "${indexes[@]}"; do
       health_runner "${RUNNER_NAMES[$i]}" "${RUNNER_PATHS[$i]}" "${RUNNER_PROFILES[$i]}" "${RUNNER_REPOS[$i]}" "${RUNNER_ENABLED[$i]}" "${RUNNER_GROUPS[$i]}"
+    done
+    ;;
+  cache)
+    for i in "${indexes[@]}"; do
+      cache_runner "${RUNNER_NAMES[$i]}" "${RUNNER_PATHS[$i]}" "${RUNNER_PROFILES[$i]}" "${RUNNER_REPOS[$i]}" "${RUNNER_GROUPS[$i]}"
     done
     ;;
   logs)

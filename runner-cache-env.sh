@@ -13,6 +13,10 @@ RUNNER_CACHE_ROOT="${RUNNER_CACHE_ROOT:-$CACHE_ENV_DIR/.runner-cache}"
 profile_raw="${LOCAL_RUNNER_PROFILE:-${RUNNER_CACHE_PROFILE:-shared}}"
 RUNNER_CACHE_PROFILE="$(printf '%s' "$profile_raw" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9._-' '-')"
 [[ -n "$RUNNER_CACHE_PROFILE" ]] || RUNNER_CACHE_PROFILE="shared"
+case "$RUNNER_CACHE_PROFILE" in
+  react|javascript|js|npm) RUNNER_CACHE_PROFILE="node" ;;
+  android) RUNNER_CACHE_PROFILE="flutter" ;;
+esac
 
 RUNNER_SHARED_CACHE_ROOT="${RUNNER_SHARED_CACHE_ROOT:-$RUNNER_CACHE_ROOT/shared}"
 RUNNER_STACK_CACHE_ROOT="${RUNNER_STACK_CACHE_ROOT:-$RUNNER_CACHE_ROOT/stacks/$RUNNER_CACHE_PROFILE}"
