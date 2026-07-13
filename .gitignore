@@ -28,6 +28,7 @@ __pycache__/
 
 # Local generated config
 *.conf
+/runners.conf
 runners.conf
 /neurotrack_ms-2/
 /neurotrack_ms-[0-9]*/

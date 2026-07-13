@@ -9,6 +9,7 @@ import shutil
 import socket
 import subprocess
 import time
+import threading
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -558,7 +559,7 @@ def main() -> None:
     server = ThreadingHTTPServer((HOST, PORT), Handler)
 
     def shutdown(_signum: int, _frame: object) -> None:
-        server.shutdown()
+        threading.Thread(target=server.shutdown, daemon=True).start()
 
     signal.signal(signal.SIGTERM, shutdown)
     signal.signal(signal.SIGINT, shutdown)
