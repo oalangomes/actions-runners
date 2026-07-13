@@ -16,7 +16,7 @@ __pycache__/
 /neurotrack-app/
 /neurotrack-app-[0-9]*/
 /neurotrack_ms/
-/neurotrack_ms-[0-9]*/
+/neurotrack_ms_[0-9]*/
 /neurotrack_web/
 /neurotrack_web-[0-9]*/
 /docsneurotrackapp/
@@ -29,3 +29,8 @@ __pycache__/
 # Local generated config
 *.conf
 runners.conf
+/neurotrack_ms-2/
+/neurotrack_ms-[0-9]*/
+/neurotrack_ms-3/
+/agentsorch-2/
+/agentsorch-3/
