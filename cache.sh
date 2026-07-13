@@ -6,6 +6,7 @@ CACHE_ENV_PATH="$BASE_DIR/runner-cache-env.sh"
 DRY_RUN=0
 OLDER_THAN_DAYS=30
 CACHE_PROFILE="shared"
+ALL_PROFILES=0
 
 usage() {
   cat <<'EOF'
@@ -24,11 +25,13 @@ Alvos:
 
 Opcoes:
   --profile NAME    profile/stack a inspecionar: shared, node, python, flutter, android, java...
+  --all-profiles    mostra status de todos os profiles/stacks criados
   --older-than N    limpa arquivos com mais de N dias (default: 30)
   --dry-run         mostra o que seria removido sem apagar
 
 Exemplos:
   ./cache.sh status --profile flutter
+  ./cache.sh status --all-profiles
   ./cache.sh status --profile node
   ./cache.sh profiles
   ./cache.sh doctor --profile python
@@ -48,6 +51,13 @@ normalize_profile() {
 
 source_cache_env() {
   [[ -f "$CACHE_ENV_PATH" ]] || die "runner-cache-env.sh nao encontrado: $CACHE_ENV_PATH"
+  unset RUNNER_STACK_CACHE_ROOT
+  unset XDG_CACHE_HOME
+  unset npm_config_cache NPM_CONFIG_CACHE npm_config_prefix NPM_CONFIG_PREFIX
+  unset COREPACK_HOME PNPM_HOME PNPM_STORE_PATH YARN_CACHE_FOLDER
+  unset GRADLE_USER_HOME MAVEN_OPTS PIP_CACHE_DIR PIPX_HOME PIPX_BIN_DIR
+  unset PUB_CACHE CARGO_HOME GOPATH GOMODCACHE GOCACHE
+  unset DOTNET_CLI_HOME NUGET_PACKAGES COMPOSER_CACHE_DIR PLAYWRIGHT_BROWSERS_PATH
   export RUNNER_CACHE_PROFILE="$(normalize_profile "$CACHE_PROFILE")"
   export LOCAL_RUNNER_PROFILE="$RUNNER_CACHE_PROFILE"
   # shellcheck source=/dev/null
@@ -121,6 +131,35 @@ print_status() {
   printf '%-14s %10s %s\n' "TOTAL" "$(human_size "$RUNNER_CACHE_ROOT")" "$RUNNER_CACHE_ROOT"
 }
 
+print_status_all_profiles() {
+  local stacks_dir="$RUNNER_CACHE_ROOT/stacks"
+  local profile
+  local effective_profile
+  local seen=" "
+
+  if [[ ! -d "$stacks_dir" ]]; then
+    echo "Nenhum profile criado em: $stacks_dir"
+    return 0
+  fi
+
+  while IFS= read -r profile; do
+    [[ -n "$profile" ]] || continue
+    effective_profile="$(normalize_profile "$profile")"
+    case "$effective_profile" in
+      react|javascript|js|npm) effective_profile="node" ;;
+      android) effective_profile="flutter" ;;
+    esac
+    if [[ "$seen" == *" $effective_profile "* ]]; then
+      continue
+    fi
+    seen="$seen$effective_profile "
+    CACHE_PROFILE="$effective_profile"
+    source_cache_env
+    print_status
+    echo
+  done < <(find "$stacks_dir" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | sort)
+}
+
 doctor() {
   echo "RUNNER_CACHE_ROOT=$RUNNER_CACHE_ROOT"
   echo "RUNNER_CACHE_PROFILE=$RUNNER_CACHE_PROFILE"
@@ -186,6 +225,10 @@ while (($#)); do
       [[ "$OLDER_THAN_DAYS" =~ ^[0-9]+$ ]] || die "--older-than exige numero de dias"
       shift 2
       ;;
+    --all-profiles)
+      ALL_PROFILES=1
+      shift
+      ;;
     --dry-run)
       DRY_RUN=1
       shift
@@ -209,7 +252,11 @@ source_cache_env
 
 case "$ACTION" in
   status)
-    print_status
+    if [[ "$ALL_PROFILES" -eq 1 ]]; then
+      print_status_all_profiles
+    else
+      print_status
+    fi
     ;;
   profiles)
     print_profiles

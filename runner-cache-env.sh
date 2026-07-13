@@ -34,6 +34,14 @@ export AGENT_TOOLSDIRECTORY="${AGENT_TOOLSDIRECTORY:-$RUNNER_TOOL_CACHE}"
 
 export npm_config_cache="${npm_config_cache:-$RUNNER_STACK_CACHE_ROOT/npm}"
 export NPM_CONFIG_CACHE="${NPM_CONFIG_CACHE:-$npm_config_cache}"
+export npm_config_prefix="${npm_config_prefix:-$RUNNER_STACK_CACHE_ROOT/npm-global}"
+export NPM_CONFIG_PREFIX="${NPM_CONFIG_PREFIX:-$npm_config_prefix}"
+export npm_config_prefer_offline="${npm_config_prefer_offline:-true}"
+export NPM_CONFIG_PREFER_OFFLINE="${NPM_CONFIG_PREFER_OFFLINE:-$npm_config_prefer_offline}"
+export npm_config_audit="${npm_config_audit:-false}"
+export NPM_CONFIG_AUDIT="${NPM_CONFIG_AUDIT:-$npm_config_audit}"
+export npm_config_fund="${npm_config_fund:-false}"
+export NPM_CONFIG_FUND="${NPM_CONFIG_FUND:-$npm_config_fund}"
 export COREPACK_HOME="${COREPACK_HOME:-$RUNNER_STACK_CACHE_ROOT/corepack}"
 export PNPM_HOME="${PNPM_HOME:-$RUNNER_STACK_CACHE_ROOT/pnpm/home}"
 export PNPM_STORE_PATH="${PNPM_STORE_PATH:-$RUNNER_STACK_CACHE_ROOT/pnpm/store}"
@@ -77,7 +85,7 @@ if [[ "${RUNNER_STRICT_LINUX_PATH:-1}" == "1" ]]; then
   export PATH="$cleaned_path"
 fi
 
-for extra_path in "$PNPM_HOME" "$PIPX_BIN_DIR" "$CARGO_HOME/bin" "$GOPATH/bin"; do
+for extra_path in "$npm_config_prefix/bin" "$PNPM_HOME" "$PIPX_BIN_DIR" "$CARGO_HOME/bin" "$GOPATH/bin"; do
   case ":$PATH:" in
     *":$extra_path:"*) ;;
     *) export PATH="$extra_path:$PATH" ;;
@@ -92,6 +100,7 @@ mkdir -p \
   "$XDG_CACHE_HOME" \
   "$RUNNER_TOOL_CACHE" \
   "$npm_config_cache" \
+  "$npm_config_prefix" \
   "$COREPACK_HOME" \
   "$PNPM_HOME" \
   "$PNPM_STORE_PATH" \

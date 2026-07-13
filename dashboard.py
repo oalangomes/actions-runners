@@ -29,6 +29,10 @@ ERROR_RE = re.compile(
     r"error|fatal|unauthorized|forbidden|denied|failed|cannot|exception|segmentation fault|already exists",
     re.I,
 )
+ACTION_DOWNLOAD_RE = re.compile(r"Save archive 'https://codeload\.github\.com/([^']+)'|Download action|Downloading actions", re.I)
+DOWNLOAD_TIMEOUT_RE = re.compile(r"HttpClient\.Timeout|Fail to download archive|request was canceled", re.I)
+NPM_GLOBAL_INSTALL_RE = re.compile(r"\bnpm\s+install\s+-g\b", re.I)
+NPM_ADHOC_INSTALL_RE = re.compile(r"\bnpm\s+install\s+(?!(-g|--global)\b)(?!$)(?!\s*(?:--|$))", re.I)
 
 INDEX_HTML = r"""<!doctype html>
 <html lang="pt-BR">
@@ -46,7 +50,7 @@ INDEX_HTML = r"""<!doctype html>
     .metrics{display:grid;grid-template-columns:repeat(7,minmax(110px,1fr));gap:10px;margin-bottom:14px}.metric-card,.panel,.group-card,.section-card{background:var(--panel);border:1px solid var(--line);border-radius:8px;box-shadow:0 1px 2px rgba(16,24,40,.05)}
     .metric-card{padding:11px;position:relative;overflow:hidden}.metric-card::after{content:"";position:absolute;left:0;right:0;bottom:0;height:3px;background:var(--line)}.metric-card.ok::after{background:var(--ok)}.metric-card.warn::after{background:var(--warn)}.metric-card.critical::after{background:var(--critical)}.metric{font-size:22px;font-weight:760}.label{color:var(--muted);font-size:12px;margin-top:3px}.layout{display:grid;grid-template-columns:minmax(330px,430px) minmax(0,1fr);gap:14px}.stack{display:flex;flex-direction:column;gap:14px}
     .panel-head{padding:12px 14px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;gap:10px;align-items:center}.group-grid{padding:10px;display:grid;grid-template-columns:1fr;gap:8px}.group-card{padding:10px}
-    .group-top{display:flex;justify-content:space-between;gap:8px}.group-actions{display:flex;gap:5px;margin-top:8px}.group-actions button{min-height:29px;padding:0 8px;font-size:12px}.runner-tools{display:grid;grid-template-columns:1fr 1fr;gap:8px;padding:10px;border-bottom:1px solid var(--line)}.runner-tools input{grid-column:1/-1}.runner-row{width:100%;display:grid;grid-template-columns:minmax(0,1fr) auto;gap:10px;padding:12px 14px;border:0;border-bottom:1px solid var(--line);border-radius:0;text-align:left;background:#fff}
+    .group-top{display:flex;justify-content:space-between;gap:8px}.group-actions{display:grid;grid-template-columns:repeat(4,1fr);gap:5px;margin-top:8px}.group-actions button{min-height:29px;padding:0 8px;font-size:12px}.group-runner-select{margin-top:8px;width:100%;font-size:12px}.runner-tools{display:grid;grid-template-columns:1fr 1fr;gap:8px;padding:10px;border-bottom:1px solid var(--line)}.runner-tools input{grid-column:1/-1}.runner-row{width:100%;display:grid;grid-template-columns:minmax(0,1fr) auto;gap:10px;padding:12px 14px;border:0;border-bottom:1px solid var(--line);border-radius:0;text-align:left;background:#fff}
     .runner-row:hover{background:#f9fafb}.runner-row.active{background:var(--soft);box-shadow:inset 3px 0 0 var(--blue)}.runner-row.busy{background:var(--soft-warn)}.runner-row.problem{background:var(--soft-critical)}.runner-name{font-weight:700}.runner-meta,.runner-path{margin-top:3px;color:var(--muted);font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.runner-facts{margin-top:6px;display:flex;gap:6px;flex-wrap:wrap}
     .status,.pill{border-radius:999px;padding:3px 8px;font-size:12px;border:1px solid var(--line);white-space:nowrap}.status.running,.pill.ok{color:var(--ok);background:#ecfdf3;border-color:#abefc6}.status.stopped,.pill.warn{color:var(--warn);background:#fffaeb;border-color:#fedf89}.status.disabled,.pill.info{color:var(--blue);background:#eff8ff;border-color:#b2ddff}.pill.critical{color:var(--critical);background:#fef3f2;border-color:#fecdca}
     .detail-head,.output{padding:14px;border-bottom:1px solid var(--line)}.detail-head{display:flex;justify-content:space-between;gap:14px;align-items:flex-start}.detail-title strong{display:block;font-size:17px}.detail-title span{display:block;color:var(--muted);margin-top:3px;font-size:12px}.pill{display:inline-flex;margin:5px 4px 0 0}.facts{display:grid;grid-template-columns:repeat(4,minmax(110px,1fr));gap:8px;padding:12px 14px;border-bottom:1px solid var(--line);background:#fcfcfd}.fact{border:1px solid var(--line);border-radius:8px;padding:8px;background:#fff}.fact strong{display:block;font-size:13px}.fact span{display:block;color:var(--muted);font-size:12px;margin-top:2px}
@@ -56,7 +60,7 @@ INDEX_HTML = r"""<!doctype html>
   </style>
 </head>
 <body>
-<header><div><h1>Central de Runners</h1><div class="label" id="hostLabel"></div></div><div class="toolbar"><span class="label" id="lastRefresh">-</span><button id="refresh">Atualizar</button><button id="startAll" class="primary">Subir todos</button><button id="stopAll" class="danger">Parar todos</button></div></header>
+<header><div><h1>Central de Runners</h1><div class="label" id="hostLabel"></div></div><div class="toolbar"><span class="label" id="lastRefresh">-</span><button id="refresh">Atualizar</button><button id="prewarmAll">Aquecer actions</button><button id="startAll" class="primary">Subir todos</button><button id="stopAll" class="danger">Parar todos</button></div></header>
 <main>
   <div class="metrics">
     <div class="metric-card"><div class="metric" id="mHealth">-</div><div class="label">saúde</div></div>
@@ -73,10 +77,10 @@ INDEX_HTML = r"""<!doctype html>
       <div class="panel"><div class="panel-head"><h2>Runners</h2><span class="label" id="runnerCount">0 visíveis</span></div><div class="runner-tools"><select id="groupFilter"><option value="all">Todos os grupos</option></select><select id="statusFilter"><option value="all">Todos status</option><option value="running">Rodando</option><option value="busy">Com job</option><option value="stopped">Parados</option><option value="problem">Com alerta</option></select><input id="runnerSearch" placeholder="Buscar runner, repo ou caminho"></div><div id="runnerList"></div></div>
     </section>
     <section class="panel">
-      <div class="detail-head"><div class="detail-title"><strong id="selectedName">Nenhum runner selecionado</strong><span id="selectedPath"></span><div id="selectedPills"></div></div><div class="toolbar"><select id="logLines"><option value="200">200 linhas</option><option value="1000" selected>1000 linhas</option><option value="3000">3000 linhas</option><option value="5000">5000 linhas</option></select><select id="logSource"><option value="all" selected>Todos logs</option><option value="run">Execução</option><option value="diag">Diagnóstico</option></select><button id="startOne" class="primary">Start</button><button id="restartOne">Restart</button><button id="stopOne" class="danger">Stop</button></div></div>
+      <div class="detail-head"><div class="detail-title"><strong id="selectedName">Nenhum runner selecionado</strong><span id="selectedPath"></span><div id="selectedPills"></div></div><div class="toolbar"><select id="logLines"><option value="200">200 linhas</option><option value="1000" selected>1000 linhas</option><option value="3000">3000 linhas</option><option value="5000">5000 linhas</option></select><select id="logSource"><option value="all" selected>Todos logs</option><option value="run">Execução</option><option value="diag">Diagnóstico</option></select><button id="prewarmOne">Aquecer</button><button id="startOne" class="primary">Start</button><button id="restartOne">Restart</button><button id="stopOne" class="danger">Stop</button></div></div>
       <div class="facts" id="selectedFacts"></div>
       <div class="insight-grid">
-        <div class="section-card"><div class="section-head"><h3>Recomendações</h3><span class="label" id="recommendationCount">0</span></div><div class="section-body" id="recommendationOutput"></div></div>
+        <div class="section-card"><div class="section-head"><h3>Recomendações</h3><div class="toolbar"><select id="insightScope"><option value="selected">Runner clicado</option><option value="group">Grupo filtrado</option><option value="all">Todos</option></select><span class="label" id="recommendationCount">0</span></div></div><div class="section-body" id="recommendationOutput"></div></div>
         <div class="section-card"><div class="section-head"><h3>Alertas</h3><span class="label" id="alertCount">0</span></div><div class="section-body" id="alertOutput"></div></div>
         <div class="section-card wide cache"><div class="section-head"><h3>Cache local</h3><span class="label" id="cacheTotal">-</span></div><div class="section-body" id="cacheOutput"></div></div>
       </div>
@@ -93,18 +97,23 @@ function setBusy(v){busy=v;document.querySelectorAll('button').forEach(b=>b.disa
 function metricClass(value,critical,warn,invert=false){if(value==null)return'';if(invert){return value<=critical?'critical':value<=warn?'warn':'ok'}return value>=critical?'critical':value>=warn?'warn':'ok'}
 function renderMetrics(){const s=state.summary||{},sys=state.system||{};$('mHealth').textContent=`${s.healthScore??0}%`;$('mRunning').textContent=s.running||0;$('mStopped').textContent=s.stopped||0;$('mGroups').textContent=state.groups?.length||0;$('mMemory').textContent=sys.memoryUsedPercent!=null?`${sys.memoryUsedPercent}%`:'-';$('mDisk').textContent=s.diskFreePercent!=null?`${s.diskFreePercent}%`:'-';$('mLoad').textContent=sys.load1??'-';$('hostLabel').textContent=`${sys.hostname||''} · uptime ${sys.uptimeHuman||'-'} · ${sys.cpuCount||'?'} CPUs`;const cards=document.querySelectorAll('.metric-card');cards[0].className=`metric-card ${metricClass(s.healthScore,50,80,true)}`;cards[4].className=`metric-card ${metricClass(sys.memoryUsedPercent,90,80)}`;cards[5].className=`metric-card ${metricClass(s.diskFreePercent,10,15,true)}`;$('lastRefresh').textContent=`atualizado ${new Date().toLocaleTimeString()}`}
 function renderGroupFilter(){const f=$('groupFilter'),current=f.value||'all';f.innerHTML='<option value="all">Todos os grupos</option>';for(const g of state.groups||[]){const o=document.createElement('option');o.value=g.name;o.textContent=`${g.name} (${g.running}/${g.enabled})`;f.appendChild(o)}f.value=[...f.options].some(o=>o.value===current)?current:'all'}
-function renderGroups(){const grid=$('groupGrid');grid.innerHTML='';if(!state.groups?.length){grid.innerHTML='<div class="empty">Nenhum grupo configurado.</div>';return}for(const g of state.groups){const card=document.createElement('div');card.className='group-card';const top=document.createElement('div');top.className='group-top';const title=document.createElement('strong');title.textContent=g.name;const stats=document.createElement('span');stats.className=`status ${g.running>0?'running':'stopped'}`;stats.textContent=`${g.running}/${g.enabled} online`;top.append(title,stats);const meta=document.createElement('div');meta.className='label';meta.textContent=`total ${g.total} · parados ${g.stopped} · alertas ${g.alerts}`;const actions=document.createElement('div');actions.className='group-actions';for(const [label,action,cls] of [['Subir','start','primary'],['Reiniciar','restart',''],['Parar','stop','danger']]){const b=document.createElement('button');b.textContent=label;b.className=cls;b.onclick=()=>runAction(action,`group:${g.name}`);actions.appendChild(b)}card.append(top,meta,actions);grid.appendChild(card)}}
+function renderGroups(){const grid=$('groupGrid');grid.innerHTML='';if(!state.groups?.length){grid.innerHTML='<div class="empty">Nenhum grupo configurado.</div>';return}for(const g of state.groups){const card=document.createElement('div');card.className='group-card';const top=document.createElement('div');top.className='group-top';const title=document.createElement('strong');title.textContent=g.name;title.style.cursor='pointer';title.onclick=()=>{$('groupFilter').value=g.name;renderList();renderScopedInsights()};const stats=document.createElement('span');stats.className=`status ${g.running>0?'running':'stopped'}`;stats.textContent=`${g.running}/${g.enabled} online`;top.append(title,stats);const meta=document.createElement('div');meta.className='label';meta.textContent=`total ${g.total} · parados ${g.stopped} · alertas ${g.alerts}`;const select=document.createElement('select');select.className='group-runner-select';select.innerHTML=`<option value="group:${g.name}">Grupo inteiro</option>`;for(const r of (state.runners||[]).filter(r=>r.group===g.name).sort((a,b)=>a.name.localeCompare(b.name))){const o=document.createElement('option');o.value=r.name;o.textContent=`${r.name}${r.busy?' · job':''}${r.running?' · online':' · parado'}`;select.appendChild(o)}const actions=document.createElement('div');actions.className='group-actions';for(const [label,action,cls] of [['Aquecer','prewarm-actions',''],['Subir','start','primary'],['Reiniciar','restart',''],['Parar','stop','danger']]){const b=document.createElement('button');b.textContent=label;b.className=cls;b.onclick=()=>runAction(action,select.value);actions.appendChild(b)}card.append(top,meta,select,actions);grid.appendChild(card)}}
 function visibleRunners(){const group=$('groupFilter').value||'all',status=$('statusFilter').value||'all',q=($('runnerSearch').value||'').trim().toLowerCase();return(state.runners||[]).filter(r=>{if(group!=='all'&&r.group!==group)return false;if(status==='running'&&!r.running)return false;if(status==='busy'&&!r.busy)return false;if(status==='stopped'&&(r.running||r.enabled===false))return false;if(status==='problem'&&!(r.duplicateListener||r.orphanWorker||r.recentError||r.hasStalePid||!r.hasRunSh||!r.hasRunnerFile))return false;if(q){const hay=[r.name,r.group,r.profile,r.repo,r.path].join(' ').toLowerCase();if(!hay.includes(q))return false}return true})}
 function processSummary(r){return `L:${r.listenerPids?.length||0} W:${r.workerPids?.length||0} S:${r.shellPids?.length||0}`}
 function renderList(){const list=$('runnerList');list.innerHTML='';const runners=visibleRunners().sort((a,b)=>(b.busy-a.busy)||(b.running-a.running)||a.name.localeCompare(b.name));$('runnerCount').textContent=`${runners.length} visíveis`;if(!runners.length){list.innerHTML='<div class="empty">Nenhum runner nesse filtro.</div>';return}for(const runner of runners){const status=runner.enabled===false?'disabled':(runner.running?'running':'stopped');const problem=runner.duplicateListener||runner.orphanWorker||runner.recentError||runner.hasStalePid;const row=document.createElement('button');row.className=`runner-row ${selected===runner.name?'active':''} ${runner.busy?'busy':''} ${problem?'problem':''}`;row.type='button';row.onclick=()=>selectRunner(runner.name);row.innerHTML=`<div><div class="runner-name"></div><div class="runner-meta"></div><div class="runner-path"></div><div class="runner-facts"></div></div><span class="status ${status}">${runner.busy?'com job':status==='running'?'rodando':status==='disabled'?'desabilitado':'parado'}</span>`;row.querySelector('.runner-name').textContent=runner.name;row.querySelector('.runner-meta').textContent=`${runner.group} · ${runner.profile||'generic'} · ${processSummary(runner)} · pid ${runner.pid||'-'}`;row.querySelector('.runner-path').textContent=runner.path;const facts=row.querySelector('.runner-facts');facts.appendChild(pill(runner.workspaceHuman||'workspace -','info'));if(runner.logAgeHuman)facts.appendChild(pill(`log ${runner.logAgeHuman}`,'info'));if(problem)facts.appendChild(pill('alerta','warn'));list.appendChild(row)}}
 function fact(label,value){return `<div class="fact"><strong>${value||'-'}</strong><span>${label}</span></div>`}
-function renderSelected(){const runner=state.runners.find(i=>i.name===selected),pills=$('selectedPills');pills.innerHTML='';if(!runner){$('selectedName').textContent='Nenhum runner selecionado';$('selectedPath').textContent='';$('selectedFacts').innerHTML='';$('logOutput').textContent='Selecione um runner para ver o log.';return}$('selectedName').textContent=`${runner.name} · ${runner.busy?'com job':runner.running?'rodando':runner.enabled===false?'desabilitado':'parado'}`;$('selectedPath').textContent=runner.path;$('selectedFacts').innerHTML=fact('workspace',runner.workspaceHuman)+fact('último log',runner.logAgeHuman||'-')+fact('processos',processSummary(runner))+fact('uptime',runner.uptimeHuman||'-');pills.appendChild(pill(`grupo: ${runner.group}`));pills.appendChild(pill(`profile: ${runner.profile||'generic'}`));pills.appendChild(pill(processSummary(runner),runner.duplicateListener||runner.orphanWorker?'warn':'ok'));if(runner.repo)pills.appendChild(pill(`repo: ${runner.repo}`));if(runner.busy)pills.appendChild(pill('job em execução','warn'));if(runner.duplicateListener)pills.appendChild(pill('listeners duplicados','critical'));if(runner.orphanWorker)pills.appendChild(pill('worker órfão','critical'));if(runner.hasStalePid)pills.appendChild(pill('pid stale','warn'));if(runner.recentError)pills.appendChild(pill('erro recente','warn'))}
+function renderSelected(){const runner=state.runners.find(i=>i.name===selected),pills=$('selectedPills');pills.innerHTML='';if(!runner){$('selectedName').textContent='Nenhum runner selecionado';$('selectedPath').textContent='';$('selectedFacts').innerHTML='';$('logOutput').textContent='Selecione um runner para ver o log.';return}$('selectedName').textContent=`${runner.name} · ${runner.busy?'com job':runner.running?'rodando':runner.enabled===false?'desabilitado':'parado'}`;$('selectedPath').textContent=runner.path;$('selectedFacts').innerHTML=fact('workspace',runner.workspaceHuman)+fact('actions',runner.actionCacheHuman||'-')+fact('último log',runner.logAgeHuman||'-')+fact('uptime',runner.uptimeHuman||'-');pills.appendChild(pill(`grupo: ${runner.group}`));pills.appendChild(pill(`profile: ${runner.profile||'generic'}`));pills.appendChild(pill(processSummary(runner),runner.duplicateListener||runner.orphanWorker?'warn':'ok'));if(runner.repo)pills.appendChild(pill(`repo: ${runner.repo}`));if(runner.busy)pills.appendChild(pill('job em execução','warn'));if(runner.duplicateListener)pills.appendChild(pill('listeners duplicados','critical'));if(runner.orphanWorker)pills.appendChild(pill('worker órfão','critical'));if(runner.hasStalePid)pills.appendChild(pill('pid stale','warn'));if(runner.recentError)pills.appendChild(pill('erro recente','warn'));if((runner.actionCacheBytes||0)<20*1024*1024)pills.appendChild(pill('actions pouco aquecidas','warn'))}
 function renderItems(target,items,empty){const out=$(target);if(!items?.length){out.innerHTML=`<div class="label">${empty}</div>`;return}const ul=document.createElement('ul');for(const item of items){const li=document.createElement('li');if(item.severity)li.appendChild(pill(item.severity,item.severity==='critical'?'critical':item.severity==='warning'?'warn':'info'));li.appendChild(document.createTextNode(` ${item.message||item}`));ul.appendChild(li)}out.innerHTML='';out.appendChild(ul)}
+function scopedRunners(){const scope=$('insightScope').value||'selected';if(scope==='all')return state.runners||[];if(scope==='group'){const group=$('groupFilter').value||'all';if(group==='all')return state.runners||[];return(state.runners||[]).filter(r=>r.group===group)}const runner=state.runners.find(r=>r.name===selected);return runner?[runner]:[]}
+function itemMatchesRunners(item,runners){if(!runners.length)return false;const msg=String(item.message||item);return runners.some(r=>msg.includes(r.name)||msg.includes(`group:${r.group}`)||msg.includes(`grupo ${r.group}`))}
+function scopedItems(items){const scope=$('insightScope').value||'selected';if(scope==='all')return items||[];const runners=scopedRunners();return(items||[]).filter(item=>itemMatchesRunners(item,runners))}
+function scopeLabel(){const scope=$('insightScope').value||'selected';if(scope==='all')return'todos';if(scope==='group'){const group=$('groupFilter').value||'all';return group==='all'?'todos':`grupo ${group}`}return selected||'runner'}
+function renderScopedInsights(){const alerts=scopedItems(state.alerts),recommendations=scopedItems(state.recommendations);$('alertCount').textContent=`${alerts.length} · ${scopeLabel()}`;$('recommendationCount').textContent=`${recommendations.length} · ${scopeLabel()}`;renderItems('alertOutput',alerts,'Nenhum alerta nesse escopo.');renderItems('recommendationOutput',recommendations,'Nenhuma recomendação nesse escopo.')}
 function renderCache(){const out=$('cacheOutput');if(!state.cache?.length){$('cacheTotal').textContent='-';out.innerHTML='<div class="label">Sem dados de cache.</div>';return}const total=state.cache.find(i=>i.name==='total');$('cacheTotal').textContent=total?total.human:'-';const rows=state.cache.filter(i=>i.name!=='total').sort((a,b)=>(b.bytes||0)-(a.bytes||0)).slice(0,8).map(i=>`<tr><td>${i.name}</td><td>${i.human}</td><td>${i.path}</td></tr>`).join('');out.innerHTML=`<table><thead><tr><th>cache</th><th>size</th><th>path</th></tr></thead><tbody>${rows}</tbody></table>`}
-async function loadStatus(){state=await requestJson('/api/status');if(!selected&&state.runners.length)selected=state.runners[0].name;if(selected&&!state.runners.some(i=>i.name===selected))selected=state.runners[0]?.name||null;$('alertCount').textContent=state.alerts?.length||0;$('recommendationCount').textContent=state.recommendations?.length||0;renderMetrics();renderGroupFilter();renderGroups();renderList();renderSelected();renderItems('alertOutput',state.alerts,'Nenhum alerta ativo.');renderItems('recommendationOutput',state.recommendations,'Nenhuma recomendação agora.');renderCache();if(selected)await loadLog()}
+async function loadStatus(){state=await requestJson('/api/status');if(!selected&&state.runners.length)selected=state.runners[0].name;if(selected&&!state.runners.some(i=>i.name===selected))selected=state.runners[0]?.name||null;renderMetrics();renderGroupFilter();renderGroups();renderList();renderSelected();renderScopedInsights();renderCache();if(selected)await loadLog()}
 async function loadLog(){if(!selected)return;const data=await requestJson(`/api/log?runner=${encodeURIComponent(selected)}&lines=${$('logLines').value||1000}&source=${$('logSource').value||'all'}`);$('logOutput').textContent=data.log||'Sem log ainda.';$('logOutput').scrollTop=$('logOutput').scrollHeight}
-async function selectRunner(name){selected=name;renderList();renderSelected();await loadLog()}function confirmAction(action,target){if(action==='stop'||action==='restart')return confirm(`${action} ${target}? Jobs em execução podem ser cancelados.`);return true}async function runAction(action,target){if(!confirmAction(action,target))return;setBusy(true);$('commandOutput').textContent=`Executando: ${action} ${target}`;try{const d=await requestJson('/api/action',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action,target})});$('commandOutput').textContent=d.output||'Comando executado.'}catch(e){$('commandOutput').textContent=e.message}finally{await loadStatus().catch(e=>$('commandOutput').textContent=e.message);setBusy(false)}}
-$('refresh').onclick=()=>loadStatus();$('startAll').onclick=()=>runAction('start','all');$('stopAll').onclick=()=>runAction('stop','all');$('startOne').onclick=()=>selected&&runAction('start',selected);$('stopOne').onclick=()=>selected&&runAction('stop',selected);$('restartOne').onclick=()=>selected&&runAction('restart',selected);$('logLines').onchange=()=>loadLog();$('logSource').onchange=()=>loadLog();$('groupFilter').onchange=()=>renderList();$('statusFilter').onchange=()=>renderList();$('runnerSearch').oninput=()=>renderList();document.addEventListener('keydown',e=>{if(e.key==='/'&&document.activeElement!==$('runnerSearch')){e.preventDefault();$('runnerSearch').focus()}if(e.key==='r'&&document.activeElement.tagName!=='INPUT')loadStatus()});loadStatus().catch(e=>$('commandOutput').textContent=e.message);setInterval(()=>{if(!busy)loadStatus().catch(e=>$('commandOutput').textContent=e.message)},5000);
+async function selectRunner(name){selected=name;if($('insightScope').value==='group')$('insightScope').value='selected';renderList();renderSelected();renderScopedInsights();await loadLog()}function confirmAction(action,target){if(action==='stop'||action==='restart')return confirm(`${action} ${target}? Jobs em execução podem ser cancelados.`);if(action==='prewarm-actions')return confirm(`Aquecer actions em ${target}? Pode baixar arquivos do GitHub.`);return true}async function runAction(action,target){if(!confirmAction(action,target))return;setBusy(true);$('commandOutput').textContent=`Executando: ${action} ${target}`;try{const d=await requestJson('/api/action',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action,target})});$('commandOutput').textContent=d.output||'Comando executado.'}catch(e){$('commandOutput').textContent=e.message}finally{await loadStatus().catch(e=>$('commandOutput').textContent=e.message);setBusy(false)}}
+$('refresh').onclick=()=>loadStatus();$('prewarmAll').onclick=()=>runAction('prewarm-actions','all');$('startAll').onclick=()=>runAction('start','all');$('stopAll').onclick=()=>runAction('stop','all');$('prewarmOne').onclick=()=>selected&&runAction('prewarm-actions',selected);$('startOne').onclick=()=>selected&&runAction('start',selected);$('stopOne').onclick=()=>selected&&runAction('stop',selected);$('restartOne').onclick=()=>selected&&runAction('restart',selected);$('logLines').onchange=()=>loadLog();$('logSource').onchange=()=>loadLog();$('groupFilter').onchange=()=>{renderList();renderScopedInsights()};$('statusFilter').onchange=()=>renderList();$('runnerSearch').oninput=()=>renderList();$('insightScope').onchange=()=>renderScopedInsights();document.addEventListener('keydown',e=>{if(e.key==='/'&&document.activeElement!==$('runnerSearch')){e.preventDefault();$('runnerSearch').focus()}if(e.key==='r'&&document.activeElement.tagName!=='INPUT')loadStatus()});loadStatus().catch(e=>$('commandOutput').textContent=e.message);setInterval(()=>{if(!busy)loadStatus().catch(e=>$('commandOutput').textContent=e.message)},5000);
 </script>
 </body>
 </html>"""
@@ -257,6 +266,26 @@ def log_has_recent_error(path: Path) -> bool:
     return bool(content and ERROR_RE.search(content))
 
 
+def runner_log_signals(runner_path: Path, run_log: Path) -> dict[str, int]:
+    content_parts: list[str] = []
+    run_content = tail_file(run_log, 500)
+    if run_content:
+        content_parts.append(run_content)
+    for diag_file in recent_diag_files(runner_path, limit=6):
+        content = tail_file(diag_file, 500)
+        if content:
+            content_parts.append(content)
+    content = "\n".join(content_parts)
+    if not content:
+        return {"actionDownloads": 0, "downloadTimeouts": 0, "npmGlobalInstalls": 0, "npmAdhocInstalls": 0}
+    return {
+        "actionDownloads": len(ACTION_DOWNLOAD_RE.findall(content)),
+        "downloadTimeouts": len(DOWNLOAD_TIMEOUT_RE.findall(content)),
+        "npmGlobalInstalls": len(NPM_GLOBAL_INSTALL_RE.findall(content)),
+        "npmAdhocInstalls": len(NPM_ADHOC_INSTALL_RE.findall(content)),
+    }
+
+
 def read_runners() -> list[dict[str, object]]:
     runners: list[dict[str, object]] = []
     if not CONFIG_PATH.exists():
@@ -285,8 +314,11 @@ def read_runners() -> list[dict[str, object]]:
         runner_path = Path(path)
         log_path = LOG_DIR / f"{name}.log"
         workspace_path = runner_path / "_work"
+        actions_path = workspace_path / "_actions"
         uptime = process_uptime_seconds(active_pid)
         workspace_bytes = cached_dir_size(workspace_path)
+        action_cache_bytes = cached_dir_size(actions_path)
+        log_signals = runner_log_signals(runner_path, log_path)
         runners.append(
             {
                 "name": name,
@@ -310,6 +342,9 @@ def read_runners() -> list[dict[str, object]]:
                 "logAgeHuman": path_age_human(log_path),
                 "workspaceBytes": workspace_bytes,
                 "workspaceHuman": human_bytes(workspace_bytes),
+                "actionCacheBytes": action_cache_bytes,
+                "actionCacheHuman": human_bytes(action_cache_bytes),
+                "logSignals": log_signals,
                 "recentError": log_has_recent_error(log_path),
                 "hasStalePid": pid_raw is not None and not is_running(pid_raw) and recovered_pid is None,
                 "hasRunSh": (runner_path / "run.sh").exists(),
@@ -459,6 +494,12 @@ def build_alerts(runners: list[dict[str, object]], cache: list[dict[str, object]
             alerts.append({"severity": "warning", "message": f"{name} não tem arquivo .runner"})
         if runner["recentError"]:
             alerts.append({"severity": "warning", "message": f"{name} tem erro recente nos logs"})
+        action_cache_bytes = int(runner.get("actionCacheBytes") or 0)
+        if action_cache_bytes < 20 * 1024**2:
+            alerts.append({"severity": "info", "message": f"{name} está com _work/_actions pequeno ({runner.get('actionCacheHuman')}); rode prewarm-actions"})
+        signals = runner.get("logSignals") if isinstance(runner.get("logSignals"), dict) else {}
+        if int(signals.get("downloadTimeouts", 0)) > 0:
+            alerts.append({"severity": "warning", "message": f"{name} teve timeout/download cancelado de action nos logs recentes"})
     return alerts
 
 
@@ -491,6 +532,15 @@ def build_recommendations(runners: list[dict[str, object]], groups: list[dict[st
         recommendations.append({"severity": "critical", "message": "Reiniciar apenas runners com mais de um Runner.Listener"})
     if any(bool(runner["orphanWorker"]) for runner in runners):
         recommendations.append({"severity": "critical", "message": "Limpar workers órfãos antes de iniciar novas instâncias"})
+    for runner in runners:
+        name = str(runner["name"])
+        signals = runner.get("logSignals") if isinstance(runner.get("logSignals"), dict) else {}
+        if int(runner.get("actionCacheBytes") or 0) < 20 * 1024**2 or int(signals.get("downloadTimeouts", 0)) > 0:
+            recommendations.append({"severity": "warning", "message": f"Executar prewarm-actions em {name}: actions ainda pouco aquecidas ou com timeout recente"})
+        if int(signals.get("npmGlobalInstalls", 0)) > 0:
+            recommendations.append({"severity": "info", "message": f"{name}: mover npm install -g para dependência versionada ou usar prefixo global cacheado"})
+        if int(signals.get("npmAdhocInstalls", 0)) > 0:
+            recommendations.append({"severity": "info", "message": f"{name}: substituir npm install pacote por package-lock + npm ci"})
     total_cache = next((item for item in cache if item["name"] == "total"), None)
     if total_cache and int(total_cache["bytes"]) == 0:
         recommendations.append({"severity": "info", "message": "Executar prewarm-cache.sh: cache persistente ainda está vazio"})
@@ -512,7 +562,7 @@ def summary(runners: list[dict[str, object]], disk: dict[str, object], alerts: l
 
 
 def run_runner_action(action: str, target: str) -> subprocess.CompletedProcess[str]:
-    if action not in {"start", "stop", "restart"}:
+    if action not in {"start", "stop", "restart", "prewarm-actions"}:
         raise ValueError(f"acao nao permitida: {action}")
     if target == "all":
         pass
@@ -523,7 +573,8 @@ def run_runner_action(action: str, target: str) -> subprocess.CompletedProcess[s
         target = f"group:{group}"
     elif target not in runner_names():
         raise ValueError(f"runner desconhecido: {target}")
-    return subprocess.run([str(RUNNERS_SH), action, target], cwd=str(BASE_DIR), text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=60, check=False)
+    timeout = 900 if action == "prewarm-actions" else 60
+    return subprocess.run([str(RUNNERS_SH), action, target], cwd=str(BASE_DIR), text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=timeout, check=False)
 
 
 def status_payload() -> dict[str, object]:

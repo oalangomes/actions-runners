@@ -6,6 +6,7 @@ CONFIG_PATH="${RUNNERS_CONFIG:-$BASE_DIR/runners.conf}"
 PID_DIR="$BASE_DIR/.runner-pids"
 LOG_DIR="$BASE_DIR/.runner-logs"
 CACHE_ENV_PATH="$BASE_DIR/runner-cache-env.sh"
+PREWARM_ACTIONS_PATH="$BASE_DIR/prewarm-actions.sh"
 LOG_MAX_BYTES="${RUNNER_LOG_MAX_BYTES:-10485760}"
 ARCHIVE_DIAG_PAGES_ON_START="${RUNNER_ARCHIVE_DIAG_PAGES_ON_START:-1}"
 
@@ -24,6 +25,7 @@ Acoes:
   doctor     valida estrutura e stack por perfil
   health     mostra alertas locais resumidos
   cache      mostra uso local de cache e workspaces
+  prewarm-actions aquece actions comuns no _work/_actions
   logs       mostra caminho do log
   help       mostra ajuda
 
@@ -704,7 +706,7 @@ if [[ "$ACTION" == "help" || "$ACTION" == "-h" || "$ACTION" == "--help" ]]; then
 fi
 
 case "$ACTION" in
-  start|stop|restart|status|list|groups|doctor|health|cache|logs) ;;
+  start|stop|restart|status|list|groups|doctor|health|cache|prewarm-actions|logs) ;;
   *) die "acao desconhecida: $ACTION" ;;
 esac
 
@@ -759,6 +761,10 @@ case "$ACTION" in
     for i in "${indexes[@]}"; do
       cache_runner "${RUNNER_NAMES[$i]}" "${RUNNER_PATHS[$i]}" "${RUNNER_PROFILES[$i]}" "${RUNNER_REPOS[$i]}" "${RUNNER_GROUPS[$i]}"
     done
+    ;;
+  prewarm-actions)
+    [[ -x "$PREWARM_ACTIONS_PATH" || -f "$PREWARM_ACTIONS_PATH" ]] || die "prewarm-actions.sh nao encontrado: $PREWARM_ACTIONS_PATH"
+    bash "$PREWARM_ACTIONS_PATH" "$TARGET"
     ;;
   logs)
     for i in "${indexes[@]}"; do
