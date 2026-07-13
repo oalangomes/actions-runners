@@ -189,18 +189,87 @@ target_indexes() {
   runner_index "$target" || die "runner desconhecido: $target"
 }
 
-runner_processes_by_path() {
+runner_matching_processes() {
   local path="$1"
   [[ -d "$path" ]] || return 0
+  pgrep -af "$path" 2>/dev/null || true
+}
 
-  pgrep -af "$path" 2>/dev/null |
-    awk '/run\.sh|Runner\.Listener|Runner\.Worker/ { print $1 }' |
-    sort -n -u || true
+runner_listener_pids_by_path() {
+  local path="$1"
+  runner_matching_processes "$path" |
+    awk '/Runner\.Listener/ { print $1 }' |
+    sort -n -u
+}
+
+runner_worker_pids_by_path() {
+  local path="$1"
+  runner_matching_processes "$path" |
+    awk '/Runner\.Worker/ { print $1 }' |
+    sort -n -u
+}
+
+runner_shell_pids_by_path() {
+  local path="$1"
+  runner_matching_processes "$path" |
+    awk '/(^|[[:space:]])([^[:space:]]*\/)?run\.sh([[:space:]]|$)/ && $0 !~ /Runner\.(Listener|Worker)/ { print $1 }' |
+    sort -n -u
+}
+
+runner_processes_by_path() {
+  local path="$1"
+  {
+    runner_listener_pids_by_path "$path"
+    runner_worker_pids_by_path "$path"
+    runner_shell_pids_by_path "$path"
+  } | sort -n -u
+}
+
+runner_primary_pid_by_path() {
+  local path="$1"
+  local pid
+
+  pid="$(runner_listener_pids_by_path "$path" | head -n 1)"
+  if [[ -n "$pid" ]]; then
+    printf '%s\n' "$pid"
+    return 0
+  fi
+
+  runner_shell_pids_by_path "$path" | head -n 1
+}
+
+runner_listener_count_by_path() {
+  local path="$1"
+  runner_listener_pids_by_path "$path" | awk 'NF { count++ } END { print count+0 }'
+}
+
+runner_worker_count_by_path() {
+  local path="$1"
+  runner_worker_pids_by_path "$path" | awk 'NF { count++ } END { print count+0 }'
+}
+
+runner_shell_count_by_path() {
+  local path="$1"
+  runner_shell_pids_by_path "$path" | awk 'NF { count++ } END { print count+0 }'
+}
+
+runner_has_supervisor_by_path() {
+  local path="$1"
+  [[ -n "$(runner_primary_pid_by_path "$path")" ]]
 }
 
 runner_has_process_by_path() {
   local path="$1"
   [[ -n "$(runner_processes_by_path "$path" | head -n 1)" ]]
+}
+
+runner_process_summary() {
+  local path="$1"
+  local listeners workers shells
+  listeners="$(runner_listener_pids_by_path "$path" | paste -sd ',' -)"
+  workers="$(runner_worker_pids_by_path "$path" | paste -sd ',' -)"
+  shells="$(runner_shell_pids_by_path "$path" | paste -sd ',' -)"
+  printf 'listener=%s worker=%s shell=%s' "${listeners:-none}" "${workers:-none}" "${shells:-none}"
 }
 
 rotate_log_if_needed() {
@@ -257,7 +326,9 @@ start_runner() {
   local run_sh="$path/run.sh"
   local pid
   local file
-  local orphan_pids
+  local primary_pid
+  local listener_count
+  local worker_count
 
   if [[ "$enabled" != "true" ]]; then
     info "[SKIP] $name desabilitado no runners.conf"
@@ -269,15 +340,31 @@ start_runner() {
 
   pid="$(runner_pid "$name" || true)"
   if is_running_pid "$pid"; then
-    echo "[OK] $name ja esta rodando (pid $pid)"
+    echo "[OK] $name ja esta rodando (pid $pid; $(runner_process_summary "$path"))"
     return 0
   fi
 
-  orphan_pids="$(runner_processes_by_path "$path" | paste -sd ' ' -)"
-  if [[ -n "$orphan_pids" ]]; then
-    echo "[OK] $name parece ja estar rodando sem pid file valido: $orphan_pids"
-    echo "${orphan_pids%% *}" > "$(pid_file "$name")"
+  listener_count="$(runner_listener_count_by_path "$path")"
+  worker_count="$(runner_worker_count_by_path "$path")"
+  primary_pid="$(runner_primary_pid_by_path "$path")"
+
+  if [[ "$listener_count" -gt 1 ]]; then
+    echo "[ERR] $name possui mais de um Runner.Listener: $(runner_listener_pids_by_path "$path" | paste -sd ' ' -)" >&2
+    echo "      use: ./runners.sh restart $name" >&2
+    return 1
+  fi
+
+  if [[ -n "$primary_pid" ]]; then
+    mkdir -p "$PID_DIR"
+    echo "$primary_pid" > "$(pid_file "$name")"
+    echo "[OK] $name ja esta rodando sem pid file valido; PID recuperado: $primary_pid ($(runner_process_summary "$path"))"
     return 0
+  fi
+
+  if [[ "$worker_count" -gt 0 ]]; then
+    echo "[ERR] $name possui Runner.Worker sem Listener/supervisor: $(runner_worker_pids_by_path "$path" | paste -sd ' ' -)" >&2
+    echo "      use: ./runners.sh restart $name" >&2
+    return 1
   fi
 
   mkdir -p "$PID_DIR" "$LOG_DIR"
@@ -331,20 +418,23 @@ stop_runner() {
   local name="$1"
   local path="${2:-}"
   local pid
+  local primary_pid
 
   pid="$(runner_pid "$name" || true)"
+  primary_pid="$(runner_primary_pid_by_path "$path")"
 
-  if ! is_running_pid "$pid" && [[ -n "$path" ]] && ! runner_has_process_by_path "$path"; then
+  if ! is_running_pid "$pid" && [[ -z "$primary_pid" ]] && ! runner_has_process_by_path "$path"; then
     echo "[STOP] $name ja esta parado"
     rm -f "$(pid_file "$name")"
     return 0
   fi
 
-  echo "[STOP] parando $name${pid:+ (pid $pid)}"
+  [[ -n "$pid" ]] || pid="$primary_pid"
+  echo "[STOP] parando $name${pid:+ (pid $pid)}; $(runner_process_summary "$path")"
   terminate_pid_group "$pid"
 
   for _ in {1..20}; do
-    if ! is_running_pid "$pid" && { [[ -z "$path" ]] || ! runner_has_process_by_path "$path"; }; then
+    if ! runner_has_process_by_path "$path"; then
       rm -f "$(pid_file "$name")"
       return 0
     fi
@@ -352,10 +442,13 @@ stop_runner() {
   done
 
   echo "[STOP] encerrando processos remanescentes de $name"
-  if [[ -n "$path" ]]; then
-    kill_runner_processes_by_path "$path"
+  kill_runner_processes_by_path "$path"
+  sleep 0.5
+  if runner_has_process_by_path "$path"; then
+    while read -r pid; do
+      [[ -n "$pid" ]] && kill -9 "$pid" 2>/dev/null || true
+    done < <(runner_processes_by_path "$path")
   fi
-  [[ -n "$pid" ]] && kill -9 "$pid" 2>/dev/null || true
   rm -f "$(pid_file "$name")"
 }
 
@@ -367,15 +460,23 @@ status_runner() {
   local enabled="$5"
   local group="$6"
   local pid
-  local extra_pids
+  local primary_pid
+  local listener_count
+  local worker_count
 
   pid="$(runner_pid "$name" || true)"
-  extra_pids="$(runner_processes_by_path "$path" | paste -sd ' ' -)"
+  primary_pid="$(runner_primary_pid_by_path "$path")"
+  listener_count="$(runner_listener_count_by_path "$path")"
+  worker_count="$(runner_worker_count_by_path "$path")"
 
   if [[ "$enabled" != "true" ]]; then
     echo "[DISABLED] $name group=$group profile=$profile repo=${repo:-n/a} $path"
-  elif is_running_pid "$pid" || [[ -n "$extra_pids" ]]; then
-    echo "[OK] $name rodando pid=${pid:-n/a} detected=${extra_pids:-n/a} group=$group profile=$profile repo=${repo:-n/a} $path"
+  elif [[ "$listener_count" -gt 1 ]]; then
+    echo "[WARN] $name multiplos listeners=$(runner_listener_pids_by_path "$path" | paste -sd ',' -) workers=$worker_count group=$group profile=$profile repo=${repo:-n/a} $path"
+  elif is_running_pid "$pid" || [[ -n "$primary_pid" ]]; then
+    echo "[OK] $name rodando pid=${pid:-$primary_pid} $(runner_process_summary "$path") group=$group profile=$profile repo=${repo:-n/a} $path"
+  elif [[ "$worker_count" -gt 0 ]]; then
+    echo "[WARN] $name worker orfao=$(runner_worker_pids_by_path "$path" | paste -sd ',' -) group=$group profile=$profile repo=${repo:-n/a} $path"
   else
     echo "[STOP] $name parado group=$group profile=$profile repo=${repo:-n/a} $path"
   fi
@@ -402,7 +503,6 @@ doctor_runner() {
   local group="$6"
   local ok=0
   local cmd
-  local detected_pids
 
   echo
   echo "Runner: $name"
@@ -432,9 +532,8 @@ doctor_runner() {
     echo "[WARN] .runner nao encontrado"
   fi
 
-  detected_pids="$(runner_processes_by_path "$path" | paste -sd ' ' -)"
-  if [[ -n "$detected_pids" ]]; then
-    echo "[OK] processos detectados: $detected_pids"
+  if runner_has_process_by_path "$path"; then
+    echo "[OK] processos: $(runner_process_summary "$path")"
   else
     echo "[INFO] nenhum processo ativo detectado para este runner"
   fi
@@ -473,23 +572,32 @@ health_runner() {
   local enabled="$5"
   local group="$6"
   local pid
-  local detected_count
+  local listener_count
+  local worker_count
+  local shell_count
+  local primary_pid
 
   pid="$(runner_pid "$name" || true)"
-  detected_count="$(runner_processes_by_path "$path" | wc -l | tr -d '[:space:]')"
+  listener_count="$(runner_listener_count_by_path "$path")"
+  worker_count="$(runner_worker_count_by_path "$path")"
+  shell_count="$(runner_shell_count_by_path "$path")"
+  primary_pid="$(runner_primary_pid_by_path "$path")"
 
   if [[ "$enabled" != "true" ]]; then
     echo "[INFO] $name group=$group desabilitado"
     return 0
   fi
 
-  if [[ -f "$(pid_file "$name")" ]] && ! is_running_pid "$pid" && [[ "$detected_count" -eq 0 ]]; then
+  if [[ -f "$(pid_file "$name")" ]] && ! is_running_pid "$pid" && [[ -z "$primary_pid" ]]; then
     echo "[WARN] $name group=$group possui PID stale: $(pid_file "$name")"
   fi
-  if [[ "$detected_count" -gt 1 ]]; then
-    echo "[WARN] $name group=$group pode ter processos duplicados: $(runner_processes_by_path "$path" | paste -sd ' ' -)"
+  if [[ "$listener_count" -gt 1 ]]; then
+    echo "[CRITICAL] $name tem $listener_count Runner.Listener: $(runner_listener_pids_by_path "$path" | paste -sd ' ' -)"
   fi
-  if ! is_running_pid "$pid" && [[ "$detected_count" -eq 0 ]]; then
+  if [[ "$worker_count" -gt 0 && "$listener_count" -eq 0 && "$shell_count" -eq 0 ]]; then
+    echo "[CRITICAL] $name tem Runner.Worker sem Listener/supervisor: $(runner_worker_pids_by_path "$path" | paste -sd ' ' -)"
+  fi
+  if [[ -z "$primary_pid" && "$worker_count" -eq 0 ]]; then
     echo "[WARN] $name group=$group parado"
   fi
   if [[ ! -x "$path/run.sh" ]]; then
@@ -518,7 +626,7 @@ list_groups() {
   local total
   local enabled
   local running
-  local pid
+  local primary_pid
 
   groups="$(printf '%s\n' "${RUNNER_GROUPS[@]}" | sort -u)"
   while read -r group; do
@@ -531,8 +639,8 @@ list_groups() {
       total=$((total + 1))
       if [[ "${RUNNER_ENABLED[$i]}" == "true" ]]; then
         enabled=$((enabled + 1))
-        pid="$(runner_pid "${RUNNER_NAMES[$i]}" || true)"
-        if is_running_pid "$pid" || runner_has_process_by_path "${RUNNER_PATHS[$i]}"; then
+        primary_pid="$(runner_primary_pid_by_path "${RUNNER_PATHS[$i]}")"
+        if [[ -n "$primary_pid" ]]; then
           running=$((running + 1))
         fi
       fi
