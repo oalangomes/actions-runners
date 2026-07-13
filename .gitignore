@@ -10,15 +10,21 @@ __pycache__/
 *.tmp
 *.log
 
-# Local runner folders are added by configure-runner.sh as /<name>/
-agentsorch/
-/neurotrack-app/
-/neurotrack_ms/
-/ea-fc-sheffield-hub/
-/neurotrack_web/
-/docsneurotrackapp/
-/roboapostas/
+# Local runner folders. configure-runner.sh also appends exact/future patterns.
 /agentsorch/
+/agentsorch-[0-9]*/
+/neurotrack-app/
+/neurotrack-app-[0-9]*/
+/neurotrack_ms/
+/neurotrack_ms-[0-9]*/
+/neurotrack_web/
+/neurotrack_web-[0-9]*/
+/docsneurotrackapp/
+/docsneurotrackapp-[0-9]*/
+/ea-fc-sheffield-hub/
+/ea-fc-sheffield-hub-[0-9]*/
+/roboapostas/
+/roboapostas-[0-9]*/
 
 # Local generated config
 *.conf
