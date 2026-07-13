@@ -21,7 +21,7 @@ Uso:
 Opcoes:
   --github-line VALUE   linha copiada do GitHub com --url e --token
   --name VALUE          nome base local do runner/pasta
-  --labels VALUE        labels do runner
+  --labels VALUE        labels base do runner; o identificador final da instancia e adicionado automaticamente
   --profile VALUE       perfil tecnico: auto, generic, node, python, flutter, android, java, dotnet, go
   --group VALUE         grupo operacional: auto, neurotrack, agentsorch, ea-fc, roboapostas ou outro slug
   --enabled VALUE       true/false no runners.conf
@@ -37,7 +37,7 @@ Exemplo:
     --github-line "./config.sh --url https://github.com/oalangomes/agentsorch --token TOKEN" \
     --labels "python,agentsorch,alan-runner"
 
-Se agentsorch ja existir, uma nova execucao sem --replace cria agentsorch-2.
+Se agentsorch ja existir, uma nova execucao sem --replace cria agentsorch-2 e adiciona a label agentsorch-2.
 USAGE
 }
 
@@ -48,6 +48,13 @@ die() {
 
 step() {
   printf '\n==> %s\n' "$1"
+}
+
+trim() {
+  local value="$1"
+  value="${value#"${value%%[![:space:]]*}"}"
+  value="${value%"${value##*[![:space:]]}"}"
+  printf '%s' "$value"
 }
 
 repo_name() {
@@ -106,6 +113,31 @@ normalize_slug() {
   value="${value%-}"
   [[ -n "$value" ]] || value="generic"
   printf '%s\n' "$value"
+}
+
+append_csv_label() {
+  local current_labels="$1"
+  local required_label="$2"
+  local result=""
+  local item
+  local found=0
+  local -a label_items=()
+
+  IFS=',' read -r -a label_items <<< "$current_labels"
+  for item in "${label_items[@]}"; do
+    item="$(trim "$item")"
+    [[ -n "$item" ]] || continue
+    if [[ "${item,,}" == "${required_label,,}" ]]; then
+      found=1
+    fi
+    result+="${result:+,}$item"
+  done
+
+  if [[ "$found" -eq 0 ]]; then
+    result+="${result:+,}$required_label"
+  fi
+
+  printf '%s\n' "$result"
 }
 
 infer_profile() {
@@ -310,6 +342,11 @@ if [[ "$REPLACE" -eq 0 ]]; then
   NAME="$(next_available_runner_name "$CONFIG_PATH" "$BASE_DIR" "$REQUESTED_NAME")"
 fi
 
+# A label exclusiva da instancia acompanha exatamente o identificador/pasta final.
+# Ex.: neurotrack_ms-2 recebe automaticamente a label neurotrack_ms-2.
+INSTANCE_LABEL="$NAME"
+LABELS="$(append_csv_label "$LABELS" "$INSTANCE_LABEL")"
+
 RUNNER_DIR="$BASE_DIR/$NAME"
 MACHINE_NAME="$(hostname -s 2>/dev/null || hostname 2>/dev/null || true)"
 MACHINE_NAME="${MACHINE_NAME//[[:space:]]/-}"
@@ -325,6 +362,7 @@ else
   echo "Runner local: $NAME"
 fi
 echo "Runner GitHub: $RUNNER_GITHUB_NAME"
+echo "Instance label: $INSTANCE_LABEL"
 echo "Profile: $PROFILE"
 echo "Group: $GROUP"
 echo "Enabled: $ENABLED"
