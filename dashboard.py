@@ -23,6 +23,8 @@ CACHE_ROOT = Path(os.environ.get("RUNNER_CACHE_ROOT", BASE_DIR / ".runner-cache"
 RUNNERS_SH = BASE_DIR / "runners.sh"
 HOST = os.environ.get("RUNNERS_DASHBOARD_HOST", "127.0.0.1")
 PORT = int(os.environ.get("RUNNERS_DASHBOARD_PORT", "8765"))
+SIZE_CACHE_TTL_SECONDS = int(os.environ.get("RUNNERS_DASHBOARD_SIZE_TTL", "30"))
+SIZE_CACHE: dict[str, tuple[float, int]] = {}
 ERROR_RE = re.compile(
     r"error|fatal|unauthorized|forbidden|denied|failed|cannot|exception|segmentation fault|already exists",
     re.I,
@@ -35,25 +37,26 @@ INDEX_HTML = r"""<!doctype html>
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Central de Runners</title>
   <style>
-    :root{--bg:#f5f7fb;--panel:#fff;--text:#152033;--muted:#667085;--line:#d0d5dd;--ok:#067647;--warn:#b54708;--critical:#b42318;--blue:#175cd3;--soft:#eff4ff}
+    :root{--bg:#f4f6f8;--panel:#fff;--text:#111827;--muted:#667085;--line:#d0d5dd;--ok:#067647;--warn:#b54708;--critical:#b42318;--blue:#175cd3;--soft:#eff4ff;--soft-warn:#fffaeb;--soft-critical:#fef3f2}
     *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:14px Inter,system-ui,-apple-system,"Segoe UI",sans-serif}
-    header{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:16px 22px;background:var(--panel);border-bottom:1px solid var(--line);position:sticky;top:0;z-index:3}
+    header{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:14px 22px;background:var(--panel);border-bottom:1px solid var(--line);position:sticky;top:0;z-index:3}
     h1,h2,h3{margin:0}h1{font-size:19px}h2{font-size:15px}h3{font-size:14px}main{padding:16px 22px 28px}
-    .toolbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center}button,select{border:1px solid var(--line);background:var(--panel);border-radius:7px;min-height:34px;padding:0 11px;cursor:pointer;font:inherit}
+    .toolbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center}button,select,input{border:1px solid var(--line);background:var(--panel);border-radius:7px;min-height:34px;padding:0 11px;cursor:pointer;font:inherit}input{cursor:text;min-width:180px}
     button.primary{background:var(--blue);border-color:var(--blue);color:#fff}button.danger{color:var(--critical)}button:disabled{opacity:.55;cursor:not-allowed}
-    .metrics{display:grid;grid-template-columns:repeat(7,minmax(110px,1fr));gap:10px;margin-bottom:14px}.metric-card,.panel,.group-card{background:var(--panel);border:1px solid var(--line);border-radius:10px;box-shadow:0 1px 2px rgba(16,24,40,.05)}
-    .metric-card{padding:11px}.metric{font-size:22px;font-weight:760}.label{color:var(--muted);font-size:12px;margin-top:3px}.layout{display:grid;grid-template-columns:minmax(330px,430px) minmax(0,1fr);gap:14px}.stack{display:flex;flex-direction:column;gap:14px}
+    .metrics{display:grid;grid-template-columns:repeat(7,minmax(110px,1fr));gap:10px;margin-bottom:14px}.metric-card,.panel,.group-card,.section-card{background:var(--panel);border:1px solid var(--line);border-radius:8px;box-shadow:0 1px 2px rgba(16,24,40,.05)}
+    .metric-card{padding:11px;position:relative;overflow:hidden}.metric-card::after{content:"";position:absolute;left:0;right:0;bottom:0;height:3px;background:var(--line)}.metric-card.ok::after{background:var(--ok)}.metric-card.warn::after{background:var(--warn)}.metric-card.critical::after{background:var(--critical)}.metric{font-size:22px;font-weight:760}.label{color:var(--muted);font-size:12px;margin-top:3px}.layout{display:grid;grid-template-columns:minmax(330px,430px) minmax(0,1fr);gap:14px}.stack{display:flex;flex-direction:column;gap:14px}
     .panel-head{padding:12px 14px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;gap:10px;align-items:center}.group-grid{padding:10px;display:grid;grid-template-columns:1fr;gap:8px}.group-card{padding:10px}
-    .group-top{display:flex;justify-content:space-between;gap:8px}.group-actions{display:flex;gap:5px;margin-top:8px}.group-actions button{min-height:29px;padding:0 8px;font-size:12px}.runner-row{width:100%;display:grid;grid-template-columns:minmax(0,1fr) auto;gap:10px;padding:12px 14px;border:0;border-bottom:1px solid var(--line);border-radius:0;text-align:left}
-    .runner-row.active{background:var(--soft)}.runner-name{font-weight:700}.runner-meta,.runner-path{margin-top:3px;color:var(--muted);font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .group-top{display:flex;justify-content:space-between;gap:8px}.group-actions{display:flex;gap:5px;margin-top:8px}.group-actions button{min-height:29px;padding:0 8px;font-size:12px}.runner-tools{display:grid;grid-template-columns:1fr 1fr;gap:8px;padding:10px;border-bottom:1px solid var(--line)}.runner-tools input{grid-column:1/-1}.runner-row{width:100%;display:grid;grid-template-columns:minmax(0,1fr) auto;gap:10px;padding:12px 14px;border:0;border-bottom:1px solid var(--line);border-radius:0;text-align:left;background:#fff}
+    .runner-row:hover{background:#f9fafb}.runner-row.active{background:var(--soft);box-shadow:inset 3px 0 0 var(--blue)}.runner-row.busy{background:var(--soft-warn)}.runner-row.problem{background:var(--soft-critical)}.runner-name{font-weight:700}.runner-meta,.runner-path{margin-top:3px;color:var(--muted);font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.runner-facts{margin-top:6px;display:flex;gap:6px;flex-wrap:wrap}
     .status,.pill{border-radius:999px;padding:3px 8px;font-size:12px;border:1px solid var(--line);white-space:nowrap}.status.running,.pill.ok{color:var(--ok);background:#ecfdf3;border-color:#abefc6}.status.stopped,.pill.warn{color:var(--warn);background:#fffaeb;border-color:#fedf89}.status.disabled,.pill.info{color:var(--blue);background:#eff8ff;border-color:#b2ddff}.pill.critical{color:var(--critical);background:#fef3f2;border-color:#fecdca}
-    .detail-head,.alerts,.cache,.recommendations,.output{padding:12px 14px;border-bottom:1px solid var(--line)}.detail-head{display:flex;justify-content:space-between;gap:14px;align-items:flex-start}.detail-title strong{display:block;font-size:16px}.detail-title span{display:block;color:var(--muted);margin-top:3px;font-size:12px}.pill{display:inline-flex;margin:5px 4px 0 0}
-    ul{margin:8px 0 0;padding-left:20px}.cache table{width:100%;border-collapse:collapse;font-size:12px}.cache th,.cache td{text-align:left;padding:4px 6px;border-bottom:1px solid #eaecf0}pre{margin:0;padding:14px;min-height:320px;max-height:58vh;overflow:auto;background:#101828;color:#e4e7ec;font:12px/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}.empty{padding:20px;color:var(--muted)}
-    @media(max-width:1150px){.metrics{grid-template-columns:repeat(4,minmax(110px,1fr))}.layout{grid-template-columns:1fr}}@media(max-width:700px){header{align-items:flex-start;flex-direction:column}main{padding:12px}.metrics{grid-template-columns:repeat(2,minmax(0,1fr))}.detail-head{flex-direction:column}}
+    .detail-head,.output{padding:14px;border-bottom:1px solid var(--line)}.detail-head{display:flex;justify-content:space-between;gap:14px;align-items:flex-start}.detail-title strong{display:block;font-size:17px}.detail-title span{display:block;color:var(--muted);margin-top:3px;font-size:12px}.pill{display:inline-flex;margin:5px 4px 0 0}.facts{display:grid;grid-template-columns:repeat(4,minmax(110px,1fr));gap:8px;padding:12px 14px;border-bottom:1px solid var(--line);background:#fcfcfd}.fact{border:1px solid var(--line);border-radius:8px;padding:8px;background:#fff}.fact strong{display:block;font-size:13px}.fact span{display:block;color:var(--muted);font-size:12px;margin-top:2px}
+    .insight-grid{display:grid;grid-template-columns:1.2fr 1fr;gap:12px;padding:12px 14px;border-bottom:1px solid var(--line);background:#f8fafc}.section-card{box-shadow:none}.section-card.wide{grid-column:1/-1}.section-head{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:10px 12px;border-bottom:1px solid var(--line)}.section-body{padding:10px 12px}.log-head{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 14px;border-bottom:1px solid var(--line);background:#fcfcfd}
+    ul{margin:0;padding-left:18px}.cache table{width:100%;border-collapse:collapse;font-size:12px}.cache th,.cache td{text-align:left;padding:4px 6px;border-bottom:1px solid #eaecf0}pre{margin:0;padding:14px;min-height:320px;max-height:58vh;overflow:auto;background:#101828;color:#e4e7ec;font:12px/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}.empty{padding:20px;color:var(--muted)}.muted{color:var(--muted)}.kbd{font:11px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;border:1px solid var(--line);border-bottom-width:2px;border-radius:5px;padding:1px 5px;background:#fff}
+    @media(max-width:1150px){.metrics{grid-template-columns:repeat(4,minmax(110px,1fr))}.layout{grid-template-columns:1fr}}@media(max-width:800px){.insight-grid,.facts{grid-template-columns:1fr}}@media(max-width:700px){header{align-items:flex-start;flex-direction:column}main{padding:12px}.metrics{grid-template-columns:repeat(2,minmax(0,1fr))}.detail-head{flex-direction:column}}
   </style>
 </head>
 <body>
-<header><div><h1>Central de Runners</h1><div class="label" id="hostLabel"></div></div><div class="toolbar"><button id="refresh">Atualizar</button><button id="startAll" class="primary">Subir todos</button><button id="stopAll" class="danger">Parar todos</button></div></header>
+<header><div><h1>Central de Runners</h1><div class="label" id="hostLabel"></div></div><div class="toolbar"><span class="label" id="lastRefresh">-</span><button id="refresh">Atualizar</button><button id="startAll" class="primary">Subir todos</button><button id="stopAll" class="danger">Parar todos</button></div></header>
 <main>
   <div class="metrics">
     <div class="metric-card"><div class="metric" id="mHealth">-</div><div class="label">saúde</div></div>
@@ -67,14 +70,18 @@ INDEX_HTML = r"""<!doctype html>
   <div class="layout">
     <section class="stack">
       <div class="panel"><div class="panel-head"><h2>Grupos</h2><span class="label">controle por domínio</span></div><div class="group-grid" id="groupGrid"></div></div>
-      <div class="panel"><div class="panel-head"><h2>Runners</h2><select id="groupFilter"><option value="all">Todos os grupos</option></select></div><div id="runnerList"></div></div>
+      <div class="panel"><div class="panel-head"><h2>Runners</h2><span class="label" id="runnerCount">0 visíveis</span></div><div class="runner-tools"><select id="groupFilter"><option value="all">Todos os grupos</option></select><select id="statusFilter"><option value="all">Todos status</option><option value="running">Rodando</option><option value="busy">Com job</option><option value="stopped">Parados</option><option value="problem">Com alerta</option></select><input id="runnerSearch" placeholder="Buscar runner, repo ou caminho"></div><div id="runnerList"></div></div>
     </section>
     <section class="panel">
-      <div class="recommendations"><h3>Recomendações automáticas</h3><div id="recommendationOutput"></div></div>
       <div class="detail-head"><div class="detail-title"><strong id="selectedName">Nenhum runner selecionado</strong><span id="selectedPath"></span><div id="selectedPills"></div></div><div class="toolbar"><select id="logLines"><option value="200">200 linhas</option><option value="1000" selected>1000 linhas</option><option value="3000">3000 linhas</option><option value="5000">5000 linhas</option></select><select id="logSource"><option value="all" selected>Todos logs</option><option value="run">Execução</option><option value="diag">Diagnóstico</option></select><button id="startOne" class="primary">Start</button><button id="restartOne">Restart</button><button id="stopOne" class="danger">Stop</button></div></div>
-      <div class="alerts"><h3>Alertas</h3><div id="alertOutput"></div></div>
-      <div class="cache"><h3>Cache local</h3><div id="cacheOutput"></div></div>
+      <div class="facts" id="selectedFacts"></div>
+      <div class="insight-grid">
+        <div class="section-card"><div class="section-head"><h3>Recomendações</h3><span class="label" id="recommendationCount">0</span></div><div class="section-body" id="recommendationOutput"></div></div>
+        <div class="section-card"><div class="section-head"><h3>Alertas</h3><span class="label" id="alertCount">0</span></div><div class="section-body" id="alertOutput"></div></div>
+        <div class="section-card wide cache"><div class="section-head"><h3>Cache local</h3><span class="label" id="cacheTotal">-</span></div><div class="section-body" id="cacheOutput"></div></div>
+      </div>
       <div class="output label" id="commandOutput"></div>
+      <div class="log-head"><h3>Logs</h3><span class="label">auto-refresh 5s</span></div>
       <pre id="logOutput">Selecione um runner para ver o log.</pre>
     </section>
   </div>
@@ -83,19 +90,21 @@ INDEX_HTML = r"""<!doctype html>
 let state={runners:[],groups:[],summary:{},alerts:[],cache:[],system:{},recommendations:[]};let selected=null;let busy=false;const $=id=>document.getElementById(id);
 async function requestJson(url,options){const r=await fetch(url,options);const d=await r.json();if(!r.ok||d.ok===false)throw new Error(d.error||d.output||`HTTP ${r.status}`);return d}
 function setBusy(v){busy=v;document.querySelectorAll('button').forEach(b=>b.disabled=v)}function pill(text,kind='info'){const s=document.createElement('span');s.className=`pill ${kind}`;s.textContent=text;return s}
-function renderMetrics(){const s=state.summary||{},sys=state.system||{};$('mHealth').textContent=`${s.healthScore??0}%`;$('mRunning').textContent=s.running||0;$('mStopped').textContent=s.stopped||0;$('mGroups').textContent=state.groups?.length||0;$('mMemory').textContent=sys.memoryUsedPercent!=null?`${sys.memoryUsedPercent}%`:'-';$('mDisk').textContent=s.diskFreePercent!=null?`${s.diskFreePercent}%`:'-';$('mLoad').textContent=sys.load1??'-';$('hostLabel').textContent=`${sys.hostname||''} · uptime ${sys.uptimeHuman||'-'} · ${sys.cpuCount||'?'} CPUs`}
+function metricClass(value,critical,warn,invert=false){if(value==null)return'';if(invert){return value<=critical?'critical':value<=warn?'warn':'ok'}return value>=critical?'critical':value>=warn?'warn':'ok'}
+function renderMetrics(){const s=state.summary||{},sys=state.system||{};$('mHealth').textContent=`${s.healthScore??0}%`;$('mRunning').textContent=s.running||0;$('mStopped').textContent=s.stopped||0;$('mGroups').textContent=state.groups?.length||0;$('mMemory').textContent=sys.memoryUsedPercent!=null?`${sys.memoryUsedPercent}%`:'-';$('mDisk').textContent=s.diskFreePercent!=null?`${s.diskFreePercent}%`:'-';$('mLoad').textContent=sys.load1??'-';$('hostLabel').textContent=`${sys.hostname||''} · uptime ${sys.uptimeHuman||'-'} · ${sys.cpuCount||'?'} CPUs`;const cards=document.querySelectorAll('.metric-card');cards[0].className=`metric-card ${metricClass(s.healthScore,50,80,true)}`;cards[4].className=`metric-card ${metricClass(sys.memoryUsedPercent,90,80)}`;cards[5].className=`metric-card ${metricClass(s.diskFreePercent,10,15,true)}`;$('lastRefresh').textContent=`atualizado ${new Date().toLocaleTimeString()}`}
 function renderGroupFilter(){const f=$('groupFilter'),current=f.value||'all';f.innerHTML='<option value="all">Todos os grupos</option>';for(const g of state.groups||[]){const o=document.createElement('option');o.value=g.name;o.textContent=`${g.name} (${g.running}/${g.enabled})`;f.appendChild(o)}f.value=[...f.options].some(o=>o.value===current)?current:'all'}
 function renderGroups(){const grid=$('groupGrid');grid.innerHTML='';if(!state.groups?.length){grid.innerHTML='<div class="empty">Nenhum grupo configurado.</div>';return}for(const g of state.groups){const card=document.createElement('div');card.className='group-card';const top=document.createElement('div');top.className='group-top';const title=document.createElement('strong');title.textContent=g.name;const stats=document.createElement('span');stats.className=`status ${g.running>0?'running':'stopped'}`;stats.textContent=`${g.running}/${g.enabled} online`;top.append(title,stats);const meta=document.createElement('div');meta.className='label';meta.textContent=`total ${g.total} · parados ${g.stopped} · alertas ${g.alerts}`;const actions=document.createElement('div');actions.className='group-actions';for(const [label,action,cls] of [['Subir','start','primary'],['Reiniciar','restart',''],['Parar','stop','danger']]){const b=document.createElement('button');b.textContent=label;b.className=cls;b.onclick=()=>runAction(action,`group:${g.name}`);actions.appendChild(b)}card.append(top,meta,actions);grid.appendChild(card)}}
-function visibleRunners(){const group=$('groupFilter').value||'all';return(state.runners||[]).filter(r=>group==='all'||r.group===group)}
+function visibleRunners(){const group=$('groupFilter').value||'all',status=$('statusFilter').value||'all',q=($('runnerSearch').value||'').trim().toLowerCase();return(state.runners||[]).filter(r=>{if(group!=='all'&&r.group!==group)return false;if(status==='running'&&!r.running)return false;if(status==='busy'&&!r.busy)return false;if(status==='stopped'&&(r.running||r.enabled===false))return false;if(status==='problem'&&!(r.duplicateListener||r.orphanWorker||r.recentError||r.hasStalePid||!r.hasRunSh||!r.hasRunnerFile))return false;if(q){const hay=[r.name,r.group,r.profile,r.repo,r.path].join(' ').toLowerCase();if(!hay.includes(q))return false}return true})}
 function processSummary(r){return `L:${r.listenerPids?.length||0} W:${r.workerPids?.length||0} S:${r.shellPids?.length||0}`}
-function renderList(){const list=$('runnerList');list.innerHTML='';const runners=visibleRunners();if(!runners.length){list.innerHTML='<div class="empty">Nenhum runner nesse grupo.</div>';return}for(const runner of runners){const status=runner.enabled===false?'disabled':(runner.running?'running':'stopped');const row=document.createElement('button');row.className=`runner-row ${selected===runner.name?'active':''}`;row.type='button';row.onclick=()=>selectRunner(runner.name);row.innerHTML=`<div><div class="runner-name"></div><div class="runner-meta"></div><div class="runner-path"></div></div><span class="status ${status}">${status==='running'?'rodando':status==='disabled'?'desabilitado':'parado'}</span>`;row.querySelector('.runner-name').textContent=runner.name;row.querySelector('.runner-meta').textContent=`${runner.group} · ${runner.profile||'generic'} · ${processSummary(runner)} · pid ${runner.pid||'-'}`;row.querySelector('.runner-path').textContent=runner.path;list.appendChild(row)}}
-function renderSelected(){const runner=state.runners.find(i=>i.name===selected),pills=$('selectedPills');pills.innerHTML='';if(!runner){$('selectedName').textContent='Nenhum runner selecionado';$('selectedPath').textContent='';$('logOutput').textContent='Selecione um runner para ver o log.';return}$('selectedName').textContent=`${runner.name} · ${runner.running?'rodando':runner.enabled===false?'desabilitado':'parado'}`;$('selectedPath').textContent=runner.path;pills.appendChild(pill(`grupo: ${runner.group}`));pills.appendChild(pill(`profile: ${runner.profile||'generic'}`));pills.appendChild(pill(processSummary(runner),runner.duplicateListener||runner.orphanWorker?'warn':'ok'));if(runner.repo)pills.appendChild(pill(`repo: ${runner.repo}`));if(runner.uptimeSeconds)pills.appendChild(pill(`uptime: ${Math.round(runner.uptimeSeconds/60)} min`,'ok'));if(runner.duplicateListener)pills.appendChild(pill('listeners duplicados','critical'));if(runner.orphanWorker)pills.appendChild(pill('worker órfão','critical'));if(runner.recentError)pills.appendChild(pill('erro recente','warn'))}
+function renderList(){const list=$('runnerList');list.innerHTML='';const runners=visibleRunners().sort((a,b)=>(b.busy-a.busy)||(b.running-a.running)||a.name.localeCompare(b.name));$('runnerCount').textContent=`${runners.length} visíveis`;if(!runners.length){list.innerHTML='<div class="empty">Nenhum runner nesse filtro.</div>';return}for(const runner of runners){const status=runner.enabled===false?'disabled':(runner.running?'running':'stopped');const problem=runner.duplicateListener||runner.orphanWorker||runner.recentError||runner.hasStalePid;const row=document.createElement('button');row.className=`runner-row ${selected===runner.name?'active':''} ${runner.busy?'busy':''} ${problem?'problem':''}`;row.type='button';row.onclick=()=>selectRunner(runner.name);row.innerHTML=`<div><div class="runner-name"></div><div class="runner-meta"></div><div class="runner-path"></div><div class="runner-facts"></div></div><span class="status ${status}">${runner.busy?'com job':status==='running'?'rodando':status==='disabled'?'desabilitado':'parado'}</span>`;row.querySelector('.runner-name').textContent=runner.name;row.querySelector('.runner-meta').textContent=`${runner.group} · ${runner.profile||'generic'} · ${processSummary(runner)} · pid ${runner.pid||'-'}`;row.querySelector('.runner-path').textContent=runner.path;const facts=row.querySelector('.runner-facts');facts.appendChild(pill(runner.workspaceHuman||'workspace -','info'));if(runner.logAgeHuman)facts.appendChild(pill(`log ${runner.logAgeHuman}`,'info'));if(problem)facts.appendChild(pill('alerta','warn'));list.appendChild(row)}}
+function fact(label,value){return `<div class="fact"><strong>${value||'-'}</strong><span>${label}</span></div>`}
+function renderSelected(){const runner=state.runners.find(i=>i.name===selected),pills=$('selectedPills');pills.innerHTML='';if(!runner){$('selectedName').textContent='Nenhum runner selecionado';$('selectedPath').textContent='';$('selectedFacts').innerHTML='';$('logOutput').textContent='Selecione um runner para ver o log.';return}$('selectedName').textContent=`${runner.name} · ${runner.busy?'com job':runner.running?'rodando':runner.enabled===false?'desabilitado':'parado'}`;$('selectedPath').textContent=runner.path;$('selectedFacts').innerHTML=fact('workspace',runner.workspaceHuman)+fact('último log',runner.logAgeHuman||'-')+fact('processos',processSummary(runner))+fact('uptime',runner.uptimeHuman||'-');pills.appendChild(pill(`grupo: ${runner.group}`));pills.appendChild(pill(`profile: ${runner.profile||'generic'}`));pills.appendChild(pill(processSummary(runner),runner.duplicateListener||runner.orphanWorker?'warn':'ok'));if(runner.repo)pills.appendChild(pill(`repo: ${runner.repo}`));if(runner.busy)pills.appendChild(pill('job em execução','warn'));if(runner.duplicateListener)pills.appendChild(pill('listeners duplicados','critical'));if(runner.orphanWorker)pills.appendChild(pill('worker órfão','critical'));if(runner.hasStalePid)pills.appendChild(pill('pid stale','warn'));if(runner.recentError)pills.appendChild(pill('erro recente','warn'))}
 function renderItems(target,items,empty){const out=$(target);if(!items?.length){out.innerHTML=`<div class="label">${empty}</div>`;return}const ul=document.createElement('ul');for(const item of items){const li=document.createElement('li');if(item.severity)li.appendChild(pill(item.severity,item.severity==='critical'?'critical':item.severity==='warning'?'warn':'info'));li.appendChild(document.createTextNode(` ${item.message||item}`));ul.appendChild(li)}out.innerHTML='';out.appendChild(ul)}
-function renderCache(){const out=$('cacheOutput');if(!state.cache?.length){out.innerHTML='<div class="label">Sem dados de cache.</div>';return}const total=state.cache.find(i=>i.name==='total');const rows=state.cache.filter(i=>i.name!=='total').sort((a,b)=>(b.bytes||0)-(a.bytes||0)).slice(0,10).map(i=>`<tr><td>${i.name}</td><td>${i.human}</td><td>${i.path}</td></tr>`).join('');out.innerHTML=`<div class="label">Total: ${total?total.human:'-'}</div><table><thead><tr><th>cache</th><th>size</th><th>path</th></tr></thead><tbody>${rows}</tbody></table>`}
-async function loadStatus(){state=await requestJson('/api/status');if(!selected&&state.runners.length)selected=state.runners[0].name;if(selected&&!state.runners.some(i=>i.name===selected))selected=state.runners[0]?.name||null;renderMetrics();renderGroupFilter();renderGroups();renderList();renderSelected();renderItems('alertOutput',state.alerts,'Nenhum alerta ativo.');renderItems('recommendationOutput',state.recommendations,'Nenhuma recomendação agora.');renderCache();if(selected)await loadLog()}
+function renderCache(){const out=$('cacheOutput');if(!state.cache?.length){$('cacheTotal').textContent='-';out.innerHTML='<div class="label">Sem dados de cache.</div>';return}const total=state.cache.find(i=>i.name==='total');$('cacheTotal').textContent=total?total.human:'-';const rows=state.cache.filter(i=>i.name!=='total').sort((a,b)=>(b.bytes||0)-(a.bytes||0)).slice(0,8).map(i=>`<tr><td>${i.name}</td><td>${i.human}</td><td>${i.path}</td></tr>`).join('');out.innerHTML=`<table><thead><tr><th>cache</th><th>size</th><th>path</th></tr></thead><tbody>${rows}</tbody></table>`}
+async function loadStatus(){state=await requestJson('/api/status');if(!selected&&state.runners.length)selected=state.runners[0].name;if(selected&&!state.runners.some(i=>i.name===selected))selected=state.runners[0]?.name||null;$('alertCount').textContent=state.alerts?.length||0;$('recommendationCount').textContent=state.recommendations?.length||0;renderMetrics();renderGroupFilter();renderGroups();renderList();renderSelected();renderItems('alertOutput',state.alerts,'Nenhum alerta ativo.');renderItems('recommendationOutput',state.recommendations,'Nenhuma recomendação agora.');renderCache();if(selected)await loadLog()}
 async function loadLog(){if(!selected)return;const data=await requestJson(`/api/log?runner=${encodeURIComponent(selected)}&lines=${$('logLines').value||1000}&source=${$('logSource').value||'all'}`);$('logOutput').textContent=data.log||'Sem log ainda.';$('logOutput').scrollTop=$('logOutput').scrollHeight}
-async function selectRunner(name){selected=name;renderList();renderSelected();await loadLog()}async function runAction(action,target){setBusy(true);$('commandOutput').textContent=`Executando: ${action} ${target}`;try{const d=await requestJson('/api/action',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action,target})});$('commandOutput').textContent=d.output||'Comando executado.'}catch(e){$('commandOutput').textContent=e.message}finally{await loadStatus().catch(e=>$('commandOutput').textContent=e.message);setBusy(false)}}
-$('refresh').onclick=()=>loadStatus();$('startAll').onclick=()=>runAction('start','all');$('stopAll').onclick=()=>runAction('stop','all');$('startOne').onclick=()=>selected&&runAction('start',selected);$('stopOne').onclick=()=>selected&&runAction('stop',selected);$('restartOne').onclick=()=>selected&&runAction('restart',selected);$('logLines').onchange=()=>loadLog();$('logSource').onchange=()=>loadLog();$('groupFilter').onchange=()=>renderList();loadStatus().catch(e=>$('commandOutput').textContent=e.message);setInterval(()=>{if(!busy)loadStatus().catch(e=>$('commandOutput').textContent=e.message)},5000);
+async function selectRunner(name){selected=name;renderList();renderSelected();await loadLog()}function confirmAction(action,target){if(action==='stop'||action==='restart')return confirm(`${action} ${target}? Jobs em execução podem ser cancelados.`);return true}async function runAction(action,target){if(!confirmAction(action,target))return;setBusy(true);$('commandOutput').textContent=`Executando: ${action} ${target}`;try{const d=await requestJson('/api/action',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action,target})});$('commandOutput').textContent=d.output||'Comando executado.'}catch(e){$('commandOutput').textContent=e.message}finally{await loadStatus().catch(e=>$('commandOutput').textContent=e.message);setBusy(false)}}
+$('refresh').onclick=()=>loadStatus();$('startAll').onclick=()=>runAction('start','all');$('stopAll').onclick=()=>runAction('stop','all');$('startOne').onclick=()=>selected&&runAction('start',selected);$('stopOne').onclick=()=>selected&&runAction('stop',selected);$('restartOne').onclick=()=>selected&&runAction('restart',selected);$('logLines').onchange=()=>loadLog();$('logSource').onchange=()=>loadLog();$('groupFilter').onchange=()=>renderList();$('statusFilter').onchange=()=>renderList();$('runnerSearch').oninput=()=>renderList();document.addEventListener('keydown',e=>{if(e.key==='/'&&document.activeElement!==$('runnerSearch')){e.preventDefault();$('runnerSearch').focus()}if(e.key==='r'&&document.activeElement.tagName!=='INPUT')loadStatus()});loadStatus().catch(e=>$('commandOutput').textContent=e.message);setInterval(()=>{if(!busy)loadStatus().catch(e=>$('commandOutput').textContent=e.message)},5000);
 </script>
 </body>
 </html>"""
@@ -139,6 +148,17 @@ def dir_size(path: Path) -> int:
             except OSError:
                 continue
     return total
+
+
+def cached_dir_size(path: Path) -> int:
+    key = str(path)
+    now = time.time()
+    cached = SIZE_CACHE.get(key)
+    if cached and now - cached[0] < SIZE_CACHE_TTL_SECONDS:
+        return cached[1]
+    size = dir_size(path)
+    SIZE_CACHE[key] = (now, size)
+    return size
 
 
 def parse_enabled(value: str) -> bool:
@@ -216,6 +236,16 @@ def process_uptime_seconds(pid: int | None) -> int | None:
     return max(0, int(time.time() - started))
 
 
+def path_age_human(path: Path) -> str | None:
+    try:
+        age = int(time.time() - path.stat().st_mtime)
+    except OSError:
+        return None
+    if age < 60:
+        return "agora"
+    return f"há {human_duration(age)}"
+
+
 def tail_file(path: Path, lines: int) -> str:
     if not path.exists():
         return ""
@@ -254,6 +284,9 @@ def read_runners() -> list[dict[str, object]]:
         running = active_pid is not None
         runner_path = Path(path)
         log_path = LOG_DIR / f"{name}.log"
+        workspace_path = runner_path / "_work"
+        uptime = process_uptime_seconds(active_pid)
+        workspace_bytes = cached_dir_size(workspace_path)
         runners.append(
             {
                 "name": name,
@@ -270,8 +303,13 @@ def read_runners() -> list[dict[str, object]]:
                 "running": running,
                 "duplicateListener": len(listener_pids) > 1,
                 "orphanWorker": bool(worker_pids and not listener_pids and not shell_pids),
-                "uptimeSeconds": process_uptime_seconds(active_pid),
+                "busy": bool(worker_pids),
+                "uptimeSeconds": uptime,
+                "uptimeHuman": human_duration(uptime) if uptime is not None else None,
                 "logPath": str(log_path),
+                "logAgeHuman": path_age_human(log_path),
+                "workspaceBytes": workspace_bytes,
+                "workspaceHuman": human_bytes(workspace_bytes),
                 "recentError": log_has_recent_error(log_path),
                 "hasStalePid": pid_raw is not None and not is_running(pid_raw) and recovered_pid is None,
                 "hasRunSh": (runner_path / "run.sh").exists(),

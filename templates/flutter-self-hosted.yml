@@ -8,8 +8,8 @@ permissions:
   contents: read
 
 concurrency:
-  group: flutter-local-${{ github.repository }}-${{ github.ref }}
-  cancel-in-progress: false
+  group: flutter-local-${{ github.repository }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 jobs:
   flutter:
