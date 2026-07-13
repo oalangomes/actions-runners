@@ -8,8 +8,8 @@ Criar uma nova instância de runner sem sobrescrever runners existentes, mantend
 
 - uma pasta por runner;
 - um registro por runner no GitHub;
-- labels específicas por repo/stack;
-- uma label exclusiva igual ao identificador final da instância;
+- labels funcionais específicas por repo/stack;
+- uma label automática igual ao identificador final da instância;
 - caches fora do `_work`;
 - `runners.conf` atualizado pelo script oficial.
 
@@ -33,32 +33,32 @@ Errado:
 └── runner 2
 ```
 
-## Identificador e label obrigatória
+## Identificador e label automática
 
-O identificador local final deve ser registrado também como label exclusiva do runner.
+O identificador local final é registrado automaticamente como label exclusiva do runner.
 
 Exemplos:
 
 ```text
 nome local: agentsorch
-label obrigatória: agentsorch
+label automática: agentsorch
 
 nome local: agentsorch-2
-label obrigatória: agentsorch-2
+label automática: agentsorch-2
 
 nome local: neurotrack_ms-2
-label obrigatória: neurotrack_ms-2
+label automática: neurotrack_ms-2
 ```
 
-O `configure-runner.sh` adiciona essa label automaticamente depois de resolver o próximo nome livre. Não peça ao usuário para repeti-la em `--labels`.
+O usuário e o Codex não devem repetir essa label no argumento `--labels`. O `configure-runner.sh` resolve o próximo nome livre e acrescenta a label depois.
 
-As labels base continuam sendo informadas normalmente:
+Informe somente labels funcionais:
 
 ```text
 python,agentsorch,alan-runner
 ```
 
-E o resultado enviado ao GitHub fica:
+Resultado calculado pelo script:
 
 ```text
 python,agentsorch,alan-runner,agentsorch-2
@@ -96,7 +96,7 @@ cd /home/alangomes/actions-runners
 cat runners.conf
 ```
 
-3. Configurar o novo runner usando `configure-runner.sh`:
+3. Configurar o novo runner usando apenas labels funcionais:
 
 ```bash
 ./configure-runner.sh \
@@ -108,9 +108,9 @@ cat runners.conf
 4. Se o nome base já existir, o script deve auto-incrementar:
 
 ```text
-agentsorch      → primeiro runner e label agentsorch
-agentsorch-2    → segundo runner e label agentsorch-2
-agentsorch-3    → terceiro runner e label agentsorch-3
+agentsorch      → primeiro runner; label automática agentsorch
+agentsorch-2    → segundo runner; label automática agentsorch-2
+agentsorch-3    → terceiro runner; label automática agentsorch-3
 ```
 
 5. Conferir no output do script:
@@ -141,7 +141,7 @@ Labels: python,agentsorch,alan-runner,agentsorch-2
 ./runners.sh logs agentsorch-2
 ```
 
-9. Confirmar em `Settings → Actions → Runners` que o runner registrado possui a label exclusiva da instância.
+9. Confirmar em `Settings → Actions → Runners` que o runner registrado recebeu automaticamente a label da instância.
 
 ## Quando usar `--replace`
 
@@ -160,7 +160,7 @@ Exemplo:
 
 Sem pedido explícito do usuário, não use `--replace`.
 
-## Labels recomendadas
+## Labels funcionais recomendadas
 
 ### AgentsOrch
 
@@ -194,8 +194,8 @@ Ao final, informe somente:
 
 - nome local do runner;
 - nome registrado no GitHub;
-- label exclusiva da instância;
-- conjunto final de labels;
+- label automática da instância;
+- conjunto final de labels calculado pelo script;
 - pasta criada;
 - linha adicionada ao `runners.conf`;
 - status do runner;
@@ -206,7 +206,8 @@ Ao final, informe somente:
 - Não registrar runner sem token novo fornecido pelo usuário.
 - Não sobrescrever pasta existente sem `--replace` explícito.
 - Não editar `runners.conf` manualmente se `configure-runner.sh` puder fazer isso.
-- Não remover a label exclusiva igual ao identificador final do runner.
+- Não pedir ao usuário para informar manualmente a label igual ao nome final do runner.
+- Não remover a label automática igual ao identificador final.
 - Não mover caches para dentro de `_work`.
 - Não iniciar dois processos na mesma pasta de runner.
 - Não afirmar que o runner está online sem validar com `runners.sh status` ou evidência equivalente.
