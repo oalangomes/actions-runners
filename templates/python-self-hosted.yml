@@ -1,0 +1,26 @@
+name: Python Self-Hosted CI
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: python-local-${{ github.repository }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  python:
+    runs-on: [self-hosted, linux, x64, python]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install dependencies
+        run: |
+          python3 -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then pip3 install -r requirements.txt; fi
+          if [ -f pyproject.toml ]; then pip3 install -e .; fi
+      - name: Test
+        run: |
+          if command -v pytest >/dev/null 2>&1; then pytest; else python3 -m unittest discover; fi
