@@ -112,7 +112,7 @@ function renderScopedInsights(){const alerts=scopedItems(state.alerts),recommend
 function renderCache(){const out=$('cacheOutput');if(!state.cache?.length){$('cacheTotal').textContent='-';out.innerHTML='<div class="label">Sem dados de cache.</div>';return}const total=state.cache.find(i=>i.name==='total');$('cacheTotal').textContent=total?total.human:'-';const rows=state.cache.filter(i=>i.name!=='total').sort((a,b)=>(b.bytes||0)-(a.bytes||0)).slice(0,8).map(i=>`<tr><td>${i.name}</td><td>${i.human}</td><td>${i.path}</td></tr>`).join('');out.innerHTML=`<table><thead><tr><th>cache</th><th>size</th><th>path</th></tr></thead><tbody>${rows}</tbody></table>`}
 async function loadStatus(){state=await requestJson('/api/status');if(!selected&&state.runners.length)selected=state.runners[0].name;if(selected&&!state.runners.some(i=>i.name===selected))selected=state.runners[0]?.name||null;renderMetrics();renderGroupFilter();renderGroups();renderList();renderSelected();renderScopedInsights();renderCache();if(selected)await loadLog()}
 async function loadLog(){if(!selected)return;const data=await requestJson(`/api/log?runner=${encodeURIComponent(selected)}&lines=${$('logLines').value||1000}&source=${$('logSource').value||'all'}`);$('logOutput').textContent=data.log||'Sem log ainda.';$('logOutput').scrollTop=$('logOutput').scrollHeight}
-async function selectRunner(name){selected=name;if($('insightScope').value==='group')$('insightScope').value='selected';renderList();renderSelected();renderScopedInsights();await loadLog()}function confirmAction(action,target){if(action==='stop'||action==='restart')return confirm(`${action} ${target}? Jobs em execução podem ser cancelados.`);if(action==='prewarm-actions')return confirm(`Aquecer actions em ${target}? Pode baixar arquivos do GitHub.`);return true}async function runAction(action,target){if(!confirmAction(action,target))return;setBusy(true);$('commandOutput').textContent=`Executando: ${action} ${target}`;try{const d=await requestJson('/api/action',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action,target})});$('commandOutput').textContent=d.output||'Comando executado.'}catch(e){$('commandOutput').textContent=e.message}finally{await loadStatus().catch(e=>$('commandOutput').textContent=e.message);setBusy(false)}}
+async function selectRunner(name){selected=name;if($('insightScope').value==='group')$('insightScope').value='selected';renderList();renderSelected();renderScopedInsights();await loadLog()}function confirmAction(action,target){if(action==='stop'||action==='restart')return confirm(`${action} ${target}? Jobs em execução podem ser cancelados.`);if(action==='prewarm-actions')return confirm(`Aquecer actions em ${target}? Pode baixar arquivos do GitHub.`);return true}async function runAction(action,target){if(!confirmAction(action,target))return;setBusy(true);$('commandOutput').textContent=`Executando: ${action} ${target}`;try{const d=await requestJson('/api/action',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action,target})});$('commandOutput').textContent=[d.message,d.output].filter(Boolean).join('\n\n')||'Comando executado.'}catch(e){$('commandOutput').textContent=e.message}finally{await loadStatus().catch(e=>$('commandOutput').textContent=e.message);setBusy(false)}}
 $('refresh').onclick=()=>loadStatus();$('prewarmAll').onclick=()=>runAction('prewarm-actions','all');$('startAll').onclick=()=>runAction('start','all');$('stopAll').onclick=()=>runAction('stop','all');$('prewarmOne').onclick=()=>selected&&runAction('prewarm-actions',selected);$('startOne').onclick=()=>selected&&runAction('start',selected);$('stopOne').onclick=()=>selected&&runAction('stop',selected);$('restartOne').onclick=()=>selected&&runAction('restart',selected);$('logLines').onchange=()=>loadLog();$('logSource').onchange=()=>loadLog();$('groupFilter').onchange=()=>{renderList();renderScopedInsights()};$('statusFilter').onchange=()=>renderList();$('runnerSearch').oninput=()=>renderList();$('insightScope').onchange=()=>renderScopedInsights();document.addEventListener('keydown',e=>{if(e.key==='/'&&document.activeElement!==$('runnerSearch')){e.preventDefault();$('runnerSearch').focus()}if(e.key==='r'&&document.activeElement.tagName!=='INPUT')loadStatus()});loadStatus().catch(e=>$('commandOutput').textContent=e.message);setInterval(()=>{if(!busy)loadStatus().catch(e=>$('commandOutput').textContent=e.message)},5000);
 </script>
 </body>
@@ -354,14 +354,6 @@ def read_runners() -> list[dict[str, object]]:
     return runners
 
 
-def runner_names() -> set[str]:
-    return {str(runner["name"]) for runner in read_runners()}
-
-
-def group_names() -> set[str]:
-    return {str(runner["group"]) for runner in read_runners()}
-
-
 def recent_diag_files(runner_path: Path, limit: int = 8) -> list[Path]:
     diag_dir = runner_path / "_diag"
     if not diag_dir.exists():
@@ -561,20 +553,73 @@ def summary(runners: list[dict[str, object]], disk: dict[str, object], alerts: l
     return {"total": len(runners), "enabled": len(enabled), "disabled": len(disabled), "running": len(running), "stopped": len(stopped), "diskFreePercent": disk["freePercent"], "diskFreeHuman": disk["freeHuman"], "healthScore": health_score(alerts)}
 
 
-def run_runner_action(action: str, target: str) -> subprocess.CompletedProcess[str]:
+def resolve_action_target(target: str) -> tuple[str, list[str]]:
+    runners = read_runners()
+    if target == "all":
+        return target, [str(runner["name"]) for runner in runners]
+    if target.startswith("group:"):
+        group = normalize_slug(target.split(":", 1)[1])
+        group_runners = [runner for runner in runners if runner["group"] == group]
+        if not group_runners:
+            raise ValueError(f"grupo desconhecido: {group}")
+        return f"group:{group}", [str(runner["name"]) for runner in group_runners]
+    if target not in {str(runner["name"]) for runner in runners}:
+        raise ValueError(f"runner desconhecido: {target}")
+    return target, [target]
+
+
+def format_name_list(names: list[str], limit: int = 8) -> str:
+    if len(names) <= limit:
+        return ", ".join(names)
+    return f"{', '.join(names[:limit])} e mais {len(names) - limit}"
+
+
+def verify_started(target_names: list[str], timeout_seconds: float = 8.0) -> dict[str, object]:
+    deadline = time.time() + timeout_seconds
+    latest: dict[str, dict[str, object]] = {}
+    while True:
+        latest = {str(runner["name"]): runner for runner in read_runners() if str(runner["name"]) in target_names}
+        enabled = [runner for runner in latest.values() if runner["enabled"] is not False]
+        stopped = [runner for runner in enabled if not runner["running"]]
+        if enabled and not stopped:
+            break
+        if time.time() >= deadline:
+            break
+        time.sleep(0.5)
+
+    enabled_names = [str(runner["name"]) for runner in latest.values() if runner["enabled"] is not False]
+    disabled_names = [str(runner["name"]) for runner in latest.values() if runner["enabled"] is False]
+    running_names = [str(runner["name"]) for runner in latest.values() if runner["enabled"] is not False and runner["running"]]
+    stopped_names = [str(runner["name"]) for runner in latest.values() if runner["enabled"] is not False and not runner["running"]]
+
+    if not enabled_names:
+        message = "Não subiu: nenhum runner habilitado no alvo."
+        if disabled_names:
+            message += f" Desabilitado(s): {format_name_list(disabled_names)}."
+        return {"verified": False, "message": message, "running": running_names, "stopped": stopped_names, "disabled": disabled_names}
+
+    if stopped_names:
+        message = f"Não subiu completamente: {len(running_names)}/{len(enabled_names)} runner(s) online; ainda parado(s): {format_name_list(stopped_names)}."
+        if disabled_names:
+            message += f" Ignorado(s) desabilitado(s): {format_name_list(disabled_names)}."
+        return {"verified": False, "message": message, "running": running_names, "stopped": stopped_names, "disabled": disabled_names}
+
+    if len(enabled_names) == 1:
+        message = f"Subiu: {enabled_names[0]} está rodando."
+    else:
+        message = f"Subiu: {len(running_names)}/{len(enabled_names)} runners habilitados estão rodando."
+    if disabled_names:
+        message += f" Ignorado(s) desabilitado(s): {format_name_list(disabled_names)}."
+    return {"verified": True, "message": message, "running": running_names, "stopped": stopped_names, "disabled": disabled_names}
+
+
+def run_runner_action(action: str, target: str) -> tuple[subprocess.CompletedProcess[str], str, list[str]]:
     if action not in {"start", "stop", "restart", "prewarm-actions"}:
         raise ValueError(f"acao nao permitida: {action}")
-    if target == "all":
-        pass
-    elif target.startswith("group:"):
-        group = normalize_slug(target.split(":", 1)[1])
-        if group not in group_names():
-            raise ValueError(f"grupo desconhecido: {group}")
-        target = f"group:{group}"
-    elif target not in runner_names():
-        raise ValueError(f"runner desconhecido: {target}")
+    target, target_names = resolve_action_target(target)
     timeout = 900 if action == "prewarm-actions" else 60
-    return subprocess.run([str(RUNNERS_SH), action, target], cwd=str(BASE_DIR), text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=timeout, check=False)
+    result = subprocess.run([str(RUNNERS_SH), action, target], cwd=str(BASE_DIR), text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=timeout, check=False)
+    return result, target, target_names
 
 
 def status_payload() -> dict[str, object]:
@@ -638,8 +683,19 @@ class Handler(BaseHTTPRequestHandler):
         try:
             length = int(self.headers.get("Content-Length", "0"))
             payload = json.loads(self.rfile.read(length).decode("utf-8"))
-            result = run_runner_action(str(payload.get("action", "")), str(payload.get("target", "")))
-            self.send_json({"ok": result.returncode == 0, "returncode": result.returncode, "output": result.stdout.strip()}, HTTPStatus.OK if result.returncode == 0 else HTTPStatus.BAD_REQUEST)
+            action = str(payload.get("action", ""))
+            result, target, target_names = run_runner_action(action, str(payload.get("target", "")))
+            response: dict[str, object] = {
+                "ok": result.returncode == 0,
+                "returncode": result.returncode,
+                "target": target,
+                "output": result.stdout.strip(),
+                "message": "Comando executado." if result.returncode == 0 else "Comando falhou.",
+            }
+            if action in {"start", "restart"} and result.returncode == 0:
+                verification = verify_started(target_names)
+                response.update(verification)
+            self.send_json(response, HTTPStatus.OK if result.returncode == 0 else HTTPStatus.BAD_REQUEST)
         except Exception as exc:
             self.send_json({"ok": False, "error": str(exc)}, HTTPStatus.BAD_REQUEST)
 
