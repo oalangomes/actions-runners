@@ -35,3 +35,5 @@ runners.conf
 /neurotrack_ms-3/
 /agentsorch-2/
 /agentsorch-3/
+/neurotrack_integrations/
+/neurotrack_integrations-[0-9]*/
