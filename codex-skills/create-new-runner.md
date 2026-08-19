@@ -55,13 +55,13 @@ O usuário e o Codex não devem repetir essa label no argumento `--labels`. O `c
 Informe somente labels funcionais:
 
 ```text
-python,agentsorch,alan-runner
+python,agentsorch,local-runner
 ```
 
 Resultado calculado pelo script:
 
 ```text
-python,agentsorch,alan-runner,agentsorch-2
+python,agentsorch,local-runner,agentsorch-2
 ```
 
 ## Pré-requisitos
@@ -101,7 +101,7 @@ cat runners.conf
 ```bash
 ./configure-runner.sh \
   --github-line "./config.sh --url https://github.com/oalangomes/agentsorch --token TOKEN_GERADO" \
-  --labels "python,agentsorch,alan-runner" \
+  --labels "python,agentsorch,local-runner" \
   --profile python
 ```
 
@@ -118,7 +118,7 @@ agentsorch-3    → terceiro runner; label automática agentsorch-3
 ```text
 Runner local: agentsorch-2
 Instance label: agentsorch-2
-Labels: python,agentsorch,alan-runner,agentsorch-2
+Labels: python,agentsorch,local-runner,agentsorch-2
 ```
 
 6. Validar estrutura:
@@ -153,7 +153,7 @@ Exemplo:
 ./configure-runner.sh \
   --github-line "./config.sh --url https://github.com/oalangomes/agentsorch --token TOKEN_GERADO" \
   --name agentsorch \
-  --labels "python,agentsorch,alan-runner" \
+  --labels "python,agentsorch,local-runner" \
   --profile python \
   --replace
 ```
@@ -165,25 +165,25 @@ Sem pedido explícito do usuário, não use `--replace`.
 ### AgentsOrch
 
 ```text
-python,agentsorch,alan-runner
+python,agentsorch,local-runner
 ```
 
 ### NeuroTrack MS
 
 ```text
-node,neurotrack-ms,alan-runner
+node,neurotrack-ms,local-runner
 ```
 
 ### NeuroTrack Web
 
 ```text
-node,web,neurotrack-web,alan-runner
+node,web,neurotrack-web,local-runner
 ```
 
 ### NeuroTrack App
 
 ```text
-flutter,android,neurotrack-app,alan-runner
+flutter,android,neurotrack-app,local-runner
 ```
 
 A label da instância é acrescentada automaticamente a qualquer conjunto acima.

@@ -39,3 +39,6 @@ runners.conf
 /neurotrack_integrations-[0-9]*/
 graphify-out/
 .codex/skills/graphify/
+/agentsorchnext-2/
+/agentsorchnext/
+/agentsorchnext-[0-9]*/

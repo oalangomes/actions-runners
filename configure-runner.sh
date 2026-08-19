@@ -35,7 +35,7 @@ Opcoes:
 Exemplo:
   ./configure-runner.sh \
     --github-line "./config.sh --url https://github.com/oalangomes/agentsorch --token TOKEN" \
-    --labels "python,agentsorch,alan-runner"
+    --labels "python,agentsorch,local-runner"
 
 Se agentsorch ja existir, uma nova execucao sem --replace cria agentsorch-2 e adiciona a label agentsorch-2.
 USAGE
