@@ -171,14 +171,15 @@ Para iniciar o backend no host e o front Docker com um único comando:
 O script reutiliza o backend se ele já estiver ativo. Depois da configuração
 inicial da ponte WSL abaixo, não é necessário executar comandos separados.
 
-No Docker Desktop sobre WSL, crie uma ponte da porta do Windows para a distro
-WSL em um PowerShell com privilégios de administrador:
+No Docker Desktop sobre WSL, configure uma vez a ponte da porta do Windows para
+a distro WSL, executando o PowerShell como administrador:
 
 ```powershell
-$wslIp = (wsl.exe hostname -I).Trim().Split()[0]
-netsh interface portproxy delete v4tov4 listenport=8766 listenaddress=0.0.0.0
-netsh interface portproxy add v4tov4 listenport=8766 listenaddress=0.0.0.0 connectport=8766 connectaddress=$wslIp
+powershell -ExecutionPolicy Bypass -File .\setup-dashboard-portproxy.ps1
 ```
+
+Essa ponte continua configurada entre reinicializações, mas deve ser atualizada
+se o IP da distro WSL mudar.
 
 Em outro terminal, suba o front em Docker:
 
