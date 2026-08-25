@@ -162,6 +162,24 @@ Linhas antigas sem a sexta coluna continuam funcionando; o grupo é inferido pel
 O painel pode ser executado isoladamente em Docker, mantendo acesso ao mesmo
 arquivo de configuração, logs, cache e processos dos runners:
 
+Inicie primeiro o backend no host, onde os processos dos runners podem ser
+vistos e controlados:
+
+```bash
+RUNNERS_DASHBOARD_BACKEND=1 ./start-dashboard.sh
+```
+
+No Docker Desktop sobre WSL, crie uma ponte da porta do Windows para a distro
+WSL em um PowerShell com privilégios de administrador:
+
+```powershell
+$wslIp = (wsl.exe hostname -I).Trim().Split()[0]
+netsh interface portproxy delete v4tov4 listenport=8766 listenaddress=0.0.0.0
+netsh interface portproxy add v4tov4 listenport=8766 listenaddress=0.0.0.0 connectport=8766 connectaddress=$wslIp
+```
+
+Em outro terminal, suba o front em Docker:
+
 ```bash
 docker compose up -d --build
 ```
@@ -172,8 +190,8 @@ Acesse `http://127.0.0.1:8765`. Para acompanhar o serviço:
 docker compose logs -f runners-dashboard
 ```
 
-O Compose usa `pid: host` para que o painel consiga observar e controlar os
-runners iniciados no host. A porta fica publicada somente em localhost.
+O front Docker encaminha a API para o backend do host na porta `8766`; o painel
+fica disponível na porta `8765`.
 
 ## Operar por grupos
 

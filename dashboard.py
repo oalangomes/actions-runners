@@ -14,6 +14,8 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
+from urllib.request import Request, urlopen
+from urllib.error import HTTPError, URLError
 
 BASE_DIR = Path(__file__).resolve().parent
 CONFIG_PATH = BASE_DIR / "runners.conf"
@@ -23,6 +25,7 @@ CACHE_ROOT = Path(os.environ.get("RUNNER_CACHE_ROOT", BASE_DIR / ".runner-cache"
 RUNNERS_SH = BASE_DIR / "runners.sh"
 HOST = os.environ.get("RUNNERS_DASHBOARD_HOST", "127.0.0.1")
 PORT = int(os.environ.get("RUNNERS_DASHBOARD_PORT", "8765"))
+BACKEND_URL = os.environ.get("RUNNERS_DASHBOARD_BACKEND", "").rstrip("/")
 SIZE_CACHE_TTL_SECONDS = int(os.environ.get("RUNNERS_DASHBOARD_SIZE_TTL", "30"))
 SIZE_CACHE: dict[str, tuple[float, int]] = {}
 SIZE_CACHE_IN_FLIGHT: set[str] = set()
@@ -659,8 +662,39 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def proxy_backend(self) -> None:
+        if not BACKEND_URL:
+            return
+        body = None
+        if self.command == "POST":
+            length = int(self.headers.get("Content-Length", "0"))
+            body = self.rfile.read(length)
+        request = Request(f"{BACKEND_URL}{self.path}", data=body, method=self.command)
+        if body is not None:
+            request.add_header("Content-Type", self.headers.get("Content-Type", "application/json"))
+        try:
+            with urlopen(request, timeout=30) as response:
+                payload = response.read()
+                self.send_response(response.status)
+                self.send_header("Content-Type", response.headers.get("Content-Type", "application/json"))
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+        except HTTPError as exc:
+            payload = exc.read()
+            self.send_response(exc.code)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+        except URLError as exc:
+            self.send_json({"ok": False, "error": f"backend indisponivel: {exc.reason}"}, HTTPStatus.BAD_GATEWAY)
+
     def do_GET(self) -> None:
         parsed = urlparse(self.path)
+        if BACKEND_URL and parsed.path.startswith("/api/"):
+            self.proxy_backend()
+            return
         if parsed.path == "/":
             body = INDEX_HTML.encode("utf-8")
             self.send_response(HTTPStatus.OK)
@@ -691,6 +725,9 @@ class Handler(BaseHTTPRequestHandler):
         self.send_json({"ok": False, "error": "nao encontrado"}, HTTPStatus.NOT_FOUND)
 
     def do_POST(self) -> None:
+        if BACKEND_URL:
+            self.proxy_backend()
+            return
         parsed = urlparse(self.path)
         if parsed.path != "/api/action":
             self.send_json({"ok": False, "error": "nao encontrado"}, HTTPStatus.NOT_FOUND)
