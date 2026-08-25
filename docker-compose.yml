@@ -1,0 +1,14 @@
+services:
+  runners-dashboard:
+    build:
+      context: .
+    container_name: actions-runners-dashboard
+    environment:
+      RUNNERS_DASHBOARD_HOST: 0.0.0.0
+      RUNNERS_DASHBOARD_PORT: 8765
+    ports:
+      - "127.0.0.1:8765:8765"
+    pid: host
+    volumes:
+      - .:/home/alangomes/actions-runners
+    restart: unless-stopped

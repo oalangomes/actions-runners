@@ -157,6 +157,24 @@ Linhas antigas sem a sexta coluna continuam funcionando; o grupo é inferido pel
 ./runners.sh logs agentsorch
 ```
 
+## Dashboard em Docker
+
+O painel pode ser executado isoladamente em Docker, mantendo acesso ao mesmo
+arquivo de configuração, logs, cache e processos dos runners:
+
+```bash
+docker compose up -d --build
+```
+
+Acesse `http://127.0.0.1:8765`. Para acompanhar o serviço:
+
+```bash
+docker compose logs -f runners-dashboard
+```
+
+O Compose usa `pid: host` para que o painel consiga observar e controlar os
+runners iniciados no host. A porta fica publicada somente em localhost.
+
 ## Operar por grupos
 
 Listar grupos e capacidade:

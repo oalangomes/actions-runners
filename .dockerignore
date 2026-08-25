@@ -1,0 +1,14 @@
+**/_work/
+**/_diag/
+**/bin/
+**/externals/
+**/bin.*
+**/externals.*
+.git/
+.runner-cache/
+.runner-logs/
+.runner-pids/
+graphify-out/
+__pycache__/
+*.pyc
+actions-runner-*.tar.gz
