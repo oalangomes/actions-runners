@@ -25,6 +25,8 @@ HOST = os.environ.get("RUNNERS_DASHBOARD_HOST", "127.0.0.1")
 PORT = int(os.environ.get("RUNNERS_DASHBOARD_PORT", "8765"))
 SIZE_CACHE_TTL_SECONDS = int(os.environ.get("RUNNERS_DASHBOARD_SIZE_TTL", "30"))
 SIZE_CACHE: dict[str, tuple[float, int]] = {}
+SIZE_CACHE_IN_FLIGHT: set[str] = set()
+SIZE_CACHE_LOCK = threading.Lock()
 ERROR_RE = re.compile(
     r"error|fatal|unauthorized|forbidden|denied|failed|cannot|exception|segmentation fault|already exists",
     re.I,
@@ -162,12 +164,25 @@ def dir_size(path: Path) -> int:
 def cached_dir_size(path: Path) -> int:
     key = str(path)
     now = time.time()
-    cached = SIZE_CACHE.get(key)
-    if cached and now - cached[0] < SIZE_CACHE_TTL_SECONDS:
-        return cached[1]
-    size = dir_size(path)
-    SIZE_CACHE[key] = (now, size)
-    return size
+    with SIZE_CACHE_LOCK:
+        cached = SIZE_CACHE.get(key)
+        if cached and now - cached[0] < SIZE_CACHE_TTL_SECONDS:
+            return cached[1]
+        if key in SIZE_CACHE_IN_FLIGHT:
+            return cached[1] if cached else 0
+        SIZE_CACHE_IN_FLIGHT.add(key)
+
+    def refresh() -> None:
+        try:
+            size = dir_size(path)
+            with SIZE_CACHE_LOCK:
+                SIZE_CACHE[key] = (time.time(), size)
+        finally:
+            with SIZE_CACHE_LOCK:
+                SIZE_CACHE_IN_FLIGHT.discard(key)
+
+    threading.Thread(target=refresh, daemon=True).start()
+    return cached[1] if cached else 0
 
 
 def parse_enabled(value: str) -> bool:
@@ -397,9 +412,9 @@ def cache_items() -> list[dict[str, object]]:
             paths[f"stack:{profile_dir.name}"] = profile_dir
     items = []
     for name, path in paths.items():
-        size = dir_size(path)
+        size = cached_dir_size(path)
         items.append({"name": name, "path": str(path), "bytes": size, "human": human_bytes(size)})
-    total = dir_size(CACHE_ROOT)
+    total = cached_dir_size(CACHE_ROOT)
     items.append({"name": "total", "path": str(CACHE_ROOT), "bytes": total, "human": human_bytes(total)})
     return items
 
