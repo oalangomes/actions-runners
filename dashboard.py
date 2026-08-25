@@ -687,8 +687,8 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Content-Length", str(len(payload)))
             self.end_headers()
             self.wfile.write(payload)
-        except URLError as exc:
-            self.send_json({"ok": False, "error": f"backend indisponivel: {exc.reason}"}, HTTPStatus.BAD_GATEWAY)
+        except (URLError, ValueError, OSError) as exc:
+            self.send_json({"ok": False, "error": f"backend indisponivel: {exc}"}, HTTPStatus.BAD_GATEWAY)
 
     def do_GET(self) -> None:
         parsed = urlparse(self.path)
@@ -703,7 +703,10 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(body)
             return
-        if parsed.path in {"/api/status", "/api/health"}:
+        if parsed.path == "/api/health":
+            self.send_json({"ok": True})
+            return
+        if parsed.path == "/api/status":
             self.send_json(status_payload())
             return
         if parsed.path == "/api/log":

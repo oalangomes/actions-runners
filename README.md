@@ -162,12 +162,14 @@ Linhas antigas sem a sexta coluna continuam funcionando; o grupo é inferido pel
 O painel pode ser executado isoladamente em Docker, mantendo acesso ao mesmo
 arquivo de configuração, logs, cache e processos dos runners:
 
-Inicie primeiro o backend no host, onde os processos dos runners podem ser
-vistos e controlados:
+Para iniciar o backend no host e o front Docker com um único comando:
 
 ```bash
-RUNNERS_DASHBOARD_BACKEND=1 ./start-dashboard.sh
+./start-dashboard-docker.sh
 ```
+
+O script reutiliza o backend se ele já estiver ativo. Depois da configuração
+inicial da ponte WSL abaixo, não é necessário executar comandos separados.
 
 No Docker Desktop sobre WSL, crie uma ponte da porta do Windows para a distro
 WSL em um PowerShell com privilégios de administrador:

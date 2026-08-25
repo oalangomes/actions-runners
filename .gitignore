@@ -4,6 +4,8 @@ actions-runner-*.tar.gz
 # Runtime state
 .runner-logs/
 .runner-pids/
+.dashboard-backend.pid
+.dashboard-backend.log
 .runner-cache/
 __pycache__/
 *.pyc
