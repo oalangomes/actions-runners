@@ -17,6 +17,7 @@ Uso:
 
 Opcoes:
   --tool TOOL          codex, copilot, claude, agents ou all (default: all)
+                       all instala Codex + Copilot + Claude; agents e explicito
   --scope SCOPE        user ou project (default: user)
   --project-dir PATH   raiz do projeto para --scope project
   --skill NAME         instala apenas uma skill
@@ -195,7 +196,10 @@ case "$TOOL" in
     install_for_tool "$TOOL"
     ;;
   all)
-    for tool in codex copilot claude agents; do
+    if [[ "$SCOPE" == "project" ]]; then
+      die "--tool all com --scope project pode duplicar descoberta entre agentes; escolha codex, copilot, claude ou agents explicitamente"
+    fi
+    for tool in codex copilot claude; do
       install_for_tool "$tool"
     done
     ;;
