@@ -157,6 +157,39 @@ Linhas antigas sem a sexta coluna continuam funcionando; o grupo é inferido pel
 ./runners.sh logs agentsorch
 ```
 
+## Operação recomendada: systemd + Cockpit
+
+A migração nova move o lifecycle dos runners para o mecanismo oficial de serviço do GitHub Runner (`svc.sh` + `systemd`), preservando os runners, labels, toolchains e caches atuais.
+
+Comece validando sem alterar nada:
+
+```bash
+./runner-services.sh doctor all
+./runner-services.sh list
+```
+
+Migre somente uma instância primeiro:
+
+```bash
+./runner-services.sh migrate agentsorchnext-2
+./runner-services.sh status agentsorchnext-2
+./runner-services.sh logs agentsorchnext-2
+```
+
+Cockpit é opcional e fornece UI para serviços, logs e métricas do host:
+
+```bash
+./setup-cockpit.sh install
+```
+
+Guia completo:
+
+```text
+docs/systemd-cockpit-migration.md
+```
+
+O `runners.sh` e o dashboard atual continuam disponíveis durante a transição.
+
 ## Dashboard em Docker
 
 O painel pode ser executado isoladamente em Docker, mantendo acesso ao mesmo
@@ -372,7 +405,7 @@ host Ubuntu
 ## Validação
 
 ```bash
-bash -n configure-runner.sh runners.sh cache.sh prewarm-cache.sh
+bash -n configure-runner.sh runners.sh runner-services.sh setup-cockpit.sh cache.sh prewarm-cache.sh
 python3 -m py_compile dashboard.py
 ./runners.sh list
 ./runners.sh groups
