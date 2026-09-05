@@ -329,7 +329,7 @@ if [[ "$REPLACE" -eq 0 ]]; then
 fi
 
 # A label exclusiva da instancia acompanha exatamente o identificador/pasta final.
-# Ex.: neurotrack_ms-2 recebe automaticamente a label neurotrack_ms-2.
+# Ex.: my-api-2 recebe automaticamente a label my-api-2.
 INSTANCE_LABEL="$NAME"
 LABELS="$(append_csv_label "$LABELS" "$INSTANCE_LABEL")"
 
