@@ -570,15 +570,15 @@ status_runner() {
   worker_count="$(runner_worker_count_by_path "$path")"
 
   if [[ "$enabled" != "true" ]]; then
-    echo "[DISABLED] $name group=$group profile=$profile repo=${repo:-n/a} $path"
+    echo "[DISABLED] $name backend=legacy group=$group profile=$profile repo=${repo:-n/a} $path"
   elif [[ "$listener_count" -gt 1 ]]; then
-    echo "[WARN] $name multiplos listeners=$(runner_listener_pids_by_path "$path" | paste -sd ',' -) workers=$worker_count group=$group profile=$profile repo=${repo:-n/a} $path"
+    echo "[WARN] $name backend=legacy multiplos listeners=$(runner_listener_pids_by_path "$path" | paste -sd ',' -) workers=$worker_count group=$group profile=$profile repo=${repo:-n/a} $path"
   elif is_running_pid "$pid" || [[ -n "$primary_pid" ]]; then
-    echo "[OK] $name rodando pid=${pid:-$primary_pid} $(runner_process_summary "$path") group=$group profile=$profile repo=${repo:-n/a} $path"
+    echo "[OK] $name backend=legacy rodando pid=${pid:-$primary_pid} $(runner_process_summary "$path") group=$group profile=$profile repo=${repo:-n/a} $path"
   elif [[ "$worker_count" -gt 0 ]]; then
-    echo "[WARN] $name worker orfao=$(runner_worker_pids_by_path "$path" | paste -sd ',' -) group=$group profile=$profile repo=${repo:-n/a} $path"
+    echo "[WARN] $name backend=legacy worker orfao=$(runner_worker_pids_by_path "$path" | paste -sd ',' -) group=$group profile=$profile repo=${repo:-n/a} $path"
   else
-    echo "[STOP] $name parado group=$group profile=$profile repo=${repo:-n/a} $path"
+    echo "[STOP] $name backend=legacy parado group=$group profile=$profile repo=${repo:-n/a} $path"
   fi
 }
 
