@@ -129,7 +129,7 @@ private VPN
 Avoid public port forwarding for:
 
 - SSH;
-- Cockpit/dashboard;
+- Cockpit;
 - databases;
 - Docker socket;
 - administrative APIs.
