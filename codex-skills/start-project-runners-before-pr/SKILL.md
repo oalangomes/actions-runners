@@ -20,7 +20,17 @@ Use:
 
 ```bash
 RUNNERS_HOME="${ACTIONS_RUNNERS_HOME:-/home/alangomes/actions-runners}"
+
+if [[ -f "$RUNNERS_HOME/.env.local" ]]; then
+  set -a
+  source "$RUNNERS_HOME/.env.local"
+  set +a
+fi
+
+RUNNERS_CONFIG="${RUNNERS_CONFIG:-$RUNNERS_HOME/runners.conf}"
 ```
+
+The runner registry is machine-local state and may live outside the `actions-runners` Git checkout.
 
 Do not assume the current repository is the `actions-runners` repository.
 
@@ -62,7 +72,7 @@ Require:
 
 ```bash
 test -x "$RUNNERS_HOME/runners.sh"
-test -f "$RUNNERS_HOME/runners.conf"
+test -f "$RUNNERS_CONFIG"
 ```
 
 If either is missing, stop before PR creation and report the missing runner infrastructure.
@@ -71,7 +81,7 @@ Do not create, register, replace, delete, or reconfigure runners from this skill
 
 ## 4. Find enabled runners for the current repo
 
-Match the `repo` column in `runners.conf` case-insensitively and select only enabled runners.
+Match the `repo` column in the machine-local `RUNNERS_CONFIG` case-insensitively and select only enabled runners.
 
 ```bash
 mapfile -t project_runners < <(
@@ -90,7 +100,7 @@ mapfile -t project_runners < <(
         print name
       }
     }
-  ' "$RUNNERS_HOME/runners.conf"
+  ' "$RUNNERS_CONFIG"
 )
 ```
 
@@ -203,7 +213,7 @@ Runner preflight: not required for this repository.
 
 - Do not start every runner globally.
 - Do not create a runner or request a registration token.
-- Do not edit `runners.conf`.
+- Do not edit the machine-local runner registry directly when the platform scripts can manage it.
 - Do not remove stale runners automatically.
 - Do not bypass an inactive/critical configured runner and silently create the PR.
 - Do not claim the runner is online based only on `systemctl start` or an accepted start command.
