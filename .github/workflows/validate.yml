@@ -19,7 +19,7 @@ jobs:
       - name: Validate shell syntax
         shell: bash
         run: |
-          bash -n             configure-runner.sh             runners.sh             runner-services.sh             runner-runtime-env.sh             init-machine-config.sh             sync-local-git-excludes.sh             install-agent-skills.sh             setup-cockpit.sh             cache.sh             prewarm-cache.sh             prewarm-actions.sh             runner-cache-env.sh             start-dashboard.sh             start-dashboard-docker.sh
+          bash -n             configure-runner.sh             runners.sh             runner-services.sh             runner-runtime-env.sh             init-machine-config.sh             sync-local-git-excludes.sh             install-agent-skills.sh             setup-cockpit.sh             cache.sh             prewarm-cache.sh             prewarm-actions.sh             runner-cache-env.sh
 
       - name: Validate portable Agent Skills
         run: |
@@ -37,9 +37,3 @@ jobs:
             exit 1
           fi
           test ! -d codex-skills
-
-      - name: Validate dashboard Python
-        run: python3 -m py_compile dashboard.py
-
-      - name: Validate Docker Compose
-        run: docker compose config --quiet
