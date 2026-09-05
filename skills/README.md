@@ -13,7 +13,7 @@ They use the portable `SKILL.md` Agent Skills format so the workflow itself does
 
 ## Install
 
-Install both skills for every supported user-level target:
+Install both skills for the primary user-level targets (Codex, Copilot and Claude):
 
 ```bash
 ./install-agent-skills.sh --tool all
@@ -51,7 +51,7 @@ Preview without writing:
 | Claude Code | `~/.claude/skills/<skill>/SKILL.md` |
 | Generic Agent Skills | `~/.agents/skills/<skill>/SKILL.md` |
 
-The generic `~/.agents/skills` target is useful for tools that support the shared Agent Skills convention.
+The generic `~/.agents/skills` target is useful for tools that support the shared Agent Skills convention. It is installed only when `--tool agents` is requested, avoiding duplicate discovery in clients that also scan their own tool-specific directory.
 
 ## Project-local install
 
@@ -63,6 +63,8 @@ To install into another repository instead of your home directory:
   --scope project \
   --project-dir ~/projects/example
 ```
+
+`--tool all` is intentionally rejected with `--scope project`, because some agents discover more than one project-level skills directory. Choose one explicit project target to avoid duplicate skill discovery.
 
 Project destinations:
 
