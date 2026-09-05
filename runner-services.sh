@@ -15,6 +15,7 @@ Uso:
 
 Acoes:
   list       lista runners e units systemd
+  plan       mostra o que seria migrado/reativado sem alterar nada
   doctor     valida systemd e arquivos do runner
   migrate    para modo legado, instala/ativa svc.sh e preserva cache
   uninstall  remove apenas o servico systemd
@@ -26,6 +27,7 @@ Acoes:
 
 Exemplos:
   ./runner-services.sh list
+  ./runner-services.sh plan all
   ./runner-services.sh migrate agentsorchnext-2
   ./runner-services.sh migrate group:agentsorch
   ./runner-services.sh status all
@@ -71,8 +73,31 @@ require_systemd() {
 
 service_unit() {
   local path="$1"
-  [[ -f "$path/.service" ]] || return 1
-  tr -d '[:space:]' < "$path/.service"
+  local unit working_dir
+
+  if [[ -f "$path/.service" ]]; then
+    unit="$(tr -d '[:space:]' < "$path/.service")"
+    [[ -n "$unit" ]] && {
+      printf '%s\n' "$unit"
+      return 0
+    }
+  fi
+
+  if command -v systemctl >/dev/null 2>&1 && [[ -d /run/systemd/system ]]; then
+    while read -r unit; do
+      [[ -n "$unit" ]] || continue
+      working_dir="$(systemctl show "$unit" --property=WorkingDirectory --value 2>/dev/null || true)"
+      if [[ "$working_dir" == "$path" ]]; then
+        printf '%s\n' "$unit"
+        return 0
+      fi
+    done < <(
+      systemctl list-unit-files 'actions.runner.*.service' --no-legend --no-pager 2>/dev/null |
+        awk '{print $1}'
+    )
+  fi
+
+  return 1
 }
 
 matches_target() {
@@ -218,6 +243,37 @@ operate_runner() {
   esac
 }
 
+plan_runner() {
+  local name="$1" path="$2" profile="$3" repo="$4" enabled="$5" group="$6"
+  local unit state boot action reason
+
+  if [[ "$enabled" != true ]]; then
+    printf '%-24s %-14s %-12s %-12s %-14s %s\n' "$name" "$group" "$profile" "disabled" "-" "skip"
+    return 0
+  fi
+
+  unit="$(service_unit "$path" 2>/dev/null || true)"
+  if [[ -n "$unit" ]]; then
+    state="$(systemctl is-active "$unit" 2>/dev/null || true)"
+    boot="$(systemctl is-enabled "$unit" 2>/dev/null || true)"
+    action="none"
+    [[ "$state" == "active" && "$boot" == "enabled" ]] || action="repair/start"
+    printf '%-24s %-14s %-12s %-12s %-14s %s\n' "$name" "$group" "$profile" "systemd:$state" "$boot" "$action"
+    return 0
+  fi
+
+  reason=""
+  [[ -d "$path" ]] || reason="missing-dir"
+  [[ -n "$reason" || -x "$path/svc.sh" ]] || reason="missing-svc.sh"
+  [[ -n "$reason" || -f "$path/.runner" ]] || reason="missing-.runner"
+
+  if [[ -n "$reason" ]]; then
+    printf '%-24s %-14s %-12s %-12s %-14s %s\n' "$name" "$group" "$profile" "legacy" "-" "blocked:$reason"
+  else
+    printf '%-24s %-14s %-12s %-12s %-14s %s\n' "$name" "$group" "$profile" "legacy" "-" "migrate"
+  fi
+}
+
 doctor_runner() {
   local name="$1" path="$2"
   local unit
@@ -269,6 +325,9 @@ process_config() {
         [[ -n "$unit" ]] && state="$(systemctl is-active "$unit" 2>/dev/null || true)"
         printf '%-24s %-14s %-12s %-10s %s\n' "$name" "$group" "$profile" "$state" "${unit:--}"
         ;;
+      plan)
+        plan_runner "$name" "$path" "$profile" "$repo" "$enabled" "$group"
+        ;;
       doctor)
         doctor_runner "$name" "$path" || failures=$((failures + 1))
         ;;
@@ -297,7 +356,7 @@ main() {
       usage
       exit 0
       ;;
-    list|doctor|migrate|uninstall|start|stop|restart|status|logs)
+    list|plan|doctor|migrate|uninstall|start|stop|restart|status|logs)
       ;;
     *)
       usage
@@ -310,6 +369,8 @@ main() {
 
   if [[ "$action" == list ]]; then
     printf '%-24s %-14s %-12s %-10s %s\n' "RUNNER" "GROUP" "PROFILE" "STATE" "SYSTEMD UNIT"
+  elif [[ "$action" == plan ]]; then
+    printf '%-24s %-14s %-12s %-12s %-14s %s\n' "RUNNER" "GROUP" "PROFILE" "CURRENT" "BOOT" "PLAN"
   fi
 
   process_config "$action" "$target"
