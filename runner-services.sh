@@ -5,8 +5,8 @@ BASE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONFIG_PATH="${RUNNERS_CONFIG:-$BASE_DIR/runners.conf}"
 CACHE_ENV_PATH="$BASE_DIR/runner-cache-env.sh"
 SERVICE_ENV_DIR="$BASE_DIR/.runner-service-env"
-SERVICE_LOG_LINES="${RUNNER_SERVICE_LOG_LINES:-200}"
 SERVICE_USER="${RUNNER_SERVICE_USER:-${SUDO_USER:-$USER}}"
+LOG_LINES="${RUNNER_SERVICE_LOG_LINES:-200}"
 
 usage() {
   cat <<'USAGE'
@@ -14,38 +14,27 @@ Uso:
   ./runner-services.sh <acao> [runner|group:<grupo>|all]
 
 Acoes:
-  list       mostra estado de migracao e unit systemd
-  install    instala o runner como servico, sem iniciar
-  migrate    para o modo legado, instala o servico e inicia
-  uninstall  para e remove o servico (nao remove o runner do GitHub)
-  start      inicia servico(s)
-  stop       para servico(s)
-  restart    reinicia servico(s)
-  status     mostra status resumido
-  logs       mostra logs via journalctl
-  doctor     valida systemd, svc.sh, .runner e cache env
-  help       mostra ajuda
+  list       lista runners e units systemd
+  doctor     valida systemd e arquivos do runner
+  migrate    para modo legado, instala/ativa svc.sh e preserva cache
+  uninstall  remove apenas o servico systemd
+  start      inicia runner(s) ja migrado(s)
+  stop       para runner(s) ja migrado(s)
+  restart    reinicia runner(s) ja migrado(s)
+  status     mostra estado do servico
+  logs       mostra journal do servico
 
 Exemplos:
-  ./runner-services.sh doctor all
+  ./runner-services.sh list
   ./runner-services.sh migrate agentsorchnext-2
   ./runner-services.sh migrate group:agentsorch
   ./runner-services.sh status all
-  ./runner-services.sh logs agentsorchnext-2
-
-Variaveis:
-  RUNNER_SERVICE_USER       usuario do servico (default: usuario atual/SUDO_USER)
-  RUNNER_SERVICE_LOG_LINES  linhas de journalctl (default: 200)
 USAGE
 }
 
 die() {
   echo "ERRO: $*" >&2
   exit 1
-}
-
-info() {
-  printf '[%s] %s\n' "$(date '+%H:%M:%S')" "$*"
 }
 
 trim() {
@@ -65,144 +54,43 @@ normalize_slug() {
 }
 
 infer_group() {
-  local name="${1,,}"
-  local repo="${2,,}"
-  local value="$name,$repo"
-
+  local value="${1,,},${2,,}"
   case "$value" in
-    *agentsorch*) echo "agentsorch" ;;
-    *neurotrack*|*docsneurotrack*) echo "neurotrack" ;;
-    *ea-fc*|*sheffield*) echo "ea-fc" ;;
-    *roboapostas*|*robo-apostas*|*apostas*) echo "roboapostas" ;;
-    *) normalize_slug "${repo##*/}" ;;
+    *agentsorch*) echo agentsorch ;;
+    *neurotrack*|*docsneurotrack*) echo neurotrack ;;
+    *ea-fc*|*sheffield*) echo ea-fc ;;
+    *roboapostas*|*robo-apostas*|*apostas*) echo roboapostas ;;
+    *) normalize_slug "${2##*/}" ;;
   esac
 }
 
 require_systemd() {
   command -v systemctl >/dev/null 2>&1 || die "systemctl nao encontrado"
-  [[ -d /run/systemd/system ]] || die "systemd nao esta ativo. No WSL, habilite systemd antes de migrar runners."
-}
-
-require_sudo() {
-  command -v sudo >/dev/null 2>&1 || die "sudo nao encontrado"
-}
-
-read_config() {
-  [[ -f "$CONFIG_PATH" ]] || die "arquivo de configuracao nao encontrado: $CONFIG_PATH"
-
-  RUNNER_NAMES=()
-  RUNNER_PATHS=()
-  RUNNER_PROFILES=()
-  RUNNER_REPOS=()
-  RUNNER_ENABLED=()
-  RUNNER_GROUPS=()
-
-  while IFS= read -r raw_line || [[ -n "$raw_line" ]]; do
-    local line name path profile repo enabled group
-    line="${raw_line//$'\r'/}"
-    line="$(trim "$line")"
-
-    [[ -z "$line" || "${line:0:1}" == "#" ]] && continue
-    [[ "$line" == *"|"* ]] || die "linha invalida no runners.conf: $line"
-
-    IFS='|' read -r name path profile repo enabled group _ <<< "$line"
-    name="$(trim "${name:-}")"
-    path="$(trim "${path:-}")"
-    profile="$(trim "${profile:-generic}")"
-    repo="$(trim "${repo:-}")"
-    enabled="$(trim "${enabled:-true}")"
-    group="$(trim "${group:-}")"
-
-    [[ -n "$name" ]] || die "nome de runner vazio no runners.conf"
-    [[ -n "$path" ]] || die "path vazio para runner '$name'"
-
-    case "${enabled,,}" in
-      true|1|yes|y|sim) enabled="true" ;;
-      false|0|no|n|nao|não) enabled="false" ;;
-      *) enabled="true" ;;
-    esac
-
-    [[ -n "$group" ]] || group="$(infer_group "$name" "$repo")"
-    group="$(normalize_slug "$group")"
-
-    RUNNER_NAMES+=("$name")
-    RUNNER_PATHS+=("$path")
-    RUNNER_PROFILES+=("${profile:-generic}")
-    RUNNER_REPOS+=("$repo")
-    RUNNER_ENABLED+=("$enabled")
-    RUNNER_GROUPS+=("$group")
-  done < "$CONFIG_PATH"
-}
-
-runner_index() {
-  local target="$1"
-  local i
-  for i in "${!RUNNER_NAMES[@]}"; do
-    if [[ "${RUNNER_NAMES[$i]}" == "$target" ]]; then
-      printf '%s\n' "$i"
-      return 0
-    fi
-  done
-  return 1
-}
-
-target_indexes() {
-  local target="$1"
-  local group_target i matched=0
-
-  if [[ "$target" == "all" ]]; then
-    for i in "${!RUNNER_NAMES[@]}"; do
-      printf '%s\n' "$i"
-    done
-    return 0
-  fi
-
-  if [[ "$target" == group:* ]]; then
-    group_target="$(normalize_slug "${target#group:}")"
-    for i in "${!RUNNER_NAMES[@]}"; do
-      if [[ "${RUNNER_GROUPS[$i]}" == "$group_target" ]]; then
-        printf '%s\n' "$i"
-        matched=1
-      fi
-    done
-    [[ "$matched" -eq 1 ]] || die "grupo desconhecido ou vazio: $group_target"
-    return 0
-  fi
-
-  runner_index "$target" || die "runner desconhecido: $target"
+  [[ -d /run/systemd/system ]] || die "systemd nao esta ativo; no WSL habilite systemd em /etc/wsl.conf"
 }
 
 service_unit() {
   local path="$1"
-  local service_file="$path/.service"
-  [[ -f "$service_file" ]] || return 1
-  tr -d '[:space:]' < "$service_file"
+  [[ -f "$path/.service" ]] || return 1
+  tr -d '[:space:]' < "$path/.service"
 }
 
-service_installed() {
-  local path="$1"
-  [[ -n "$(service_unit "$path" 2>/dev/null || true)" ]]
+matches_target() {
+  local target="$1" name="$2" group="$3"
+  [[ "$target" == all || "$target" == "$name" || "$target" == "group:$group" ]]
 }
 
-service_active() {
-  local unit="$1"
-  systemctl is-active --quiet "$unit" 2>/dev/null
-}
-
-escape_env_value() {
+escape_env() {
   local value="$1"
   value="${value//\\/\\\\}"
   value="${value//\"/\\\"}"
   printf '%s' "$value"
 }
 
-write_service_env() {
-  local name="$1"
-  local profile="$2"
-  local repo="$3"
-  local group="$4"
+render_cache_environment() {
+  local name="$1" path="$2" profile="$3" repo="$4" group="$5"
   local env_file="$SERVICE_ENV_DIR/$name.env"
-  local tmp
+  local tmp_env tmp_path
   local -a keys=(
     RUNNER_CACHE_ROOT RUNNER_CACHE_PROFILE RUNNER_SHARED_CACHE_ROOT
     RUNNER_STACK_CACHE_ROOT RUNNER_TOOLS_CACHE_ROOT XDG_CACHE_HOME
@@ -217,7 +105,8 @@ write_service_env() {
 
   [[ -f "$CACHE_ENV_PATH" ]] || return 0
   mkdir -p "$SERVICE_ENV_DIR"
-  tmp="$(mktemp)"
+  tmp_env="$(mktemp)"
+  tmp_path="$(mktemp)"
 
   (
     export LOCAL_RUNNER_NAME="$name"
@@ -231,226 +120,184 @@ write_service_env() {
     for key in "${keys[@]}"; do
       value="${!key:-}"
       [[ -n "$value" ]] || continue
-      printf '%s="%s"\n' "$key" "$(escape_env_value "$value")"
+      printf '%s="%s"\n' "$key" "$(escape_env "$value")"
     done
-  ) > "$tmp"
+    printf '%s\n' "$PATH" > "$tmp_path"
+  ) > "$tmp_env"
 
-  install -m 0600 "$tmp" "$env_file"
-  rm -f "$tmp"
-  printf '%s\n' "$env_file"
+  install -m 0600 "$tmp_env" "$env_file"
+  install -m 0644 "$tmp_path" "$path/.path"
+  rm -f "$tmp_env" "$tmp_path"
 }
 
-write_runner_path() {
-  local name="$1"
-  local path="$2"
-  local profile="$3"
-  local repo="$4"
-  local group="$5"
-  local tmp
+install_cache_dropin() {
+  local name="$1" path="$2" profile="$3" repo="$4" group="$5"
+  local unit env_file tmp
 
-  [[ -f "$CACHE_ENV_PATH" ]] || return 0
-  tmp="$(mktemp)"
-
-  (
-    export LOCAL_RUNNER_NAME="$name"
-    export LOCAL_RUNNER_PROFILE="$profile"
-    export LOCAL_RUNNER_REPO="$repo"
-    export LOCAL_RUNNER_GROUP="$group"
-    # shellcheck source=/dev/null
-    source "$CACHE_ENV_PATH"
-    printf '%s\n' "$PATH"
-  ) > "$tmp"
-
-  install -m 0644 "$tmp" "$path/.path"
-  rm -f "$tmp"
-}
-
-install_env_dropin() {
-  local name="$1"
-  local path="$2"
-  local profile="$3"
-  local repo="$4"
-  local group="$5"
-  local unit env_file dropin_dir tmp
+  render_cache_environment "$name" "$path" "$profile" "$repo" "$group"
+  env_file="$SERVICE_ENV_DIR/$name.env"
+  [[ -f "$env_file" ]] || return 0
 
   unit="$(service_unit "$path")"
-  env_file="$(write_service_env "$name" "$profile" "$repo" "$group" || true)"
-  [[ -n "$env_file" ]] || return 0
-
-  dropin_dir="/etc/systemd/system/$unit.d"
   tmp="$(mktemp)"
   cat > "$tmp" <<EOF
 [Service]
 EnvironmentFile=$env_file
 EOF
-
-  sudo mkdir -p "$dropin_dir"
-  sudo install -m 0644 "$tmp" "$dropin_dir/10-actions-runners-cache.conf"
+  sudo mkdir -p "/etc/systemd/system/$unit.d"
+  sudo install -m 0644 "$tmp" "/etc/systemd/system/$unit.d/10-actions-runners-cache.conf"
   rm -f "$tmp"
   sudo systemctl daemon-reload
-}
-
-install_runner_service() {
-  local name="$1"
-  local path="$2"
-  local profile="$3"
-  local repo="$4"
-  local enabled="$5"
-  local group="$6"
-  local unit
-
-  [[ "$enabled" == "true" ]] || {
-    info "[SKIP] $name desabilitado no runners.conf"
-    return 0
-  }
-
-  [[ -d "$path" ]] || die "$name: diretorio nao encontrado: $path"
-  [[ -x "$path/svc.sh" ]] || die "$name: svc.sh nao encontrado/executavel em $path"
-  [[ -f "$path/.runner" ]] || die "$name: runner nao parece registrado (.runner ausente)"
-
-  if service_installed "$path"; then
-    unit="$(service_unit "$path")"
-    info "[OK] $name ja possui servico $unit"
-  else
-    info "Instalando $name como servico para usuario '$SERVICE_USER'"
-    (cd "$path" && sudo ./svc.sh install "$SERVICE_USER")
-    unit="$(service_unit "$path" || true)"
-    [[ -n "$unit" ]] || die "$name: svc.sh concluiu, mas .service nao foi criado"
-  fi
-
-  install_env_dropin "$name" "$path" "$profile" "$repo" "$group"
-  write_runner_path "$name" "$path" "$profile" "$repo" "$group"
-  info "[OK] $name -> $unit"
-}
-
-stop_legacy_runner() {
-  local name="$1"
-  if [[ -x "$BASE_DIR/runners.sh" ]]; then
-    info "Parando processo legado de $name antes da migracao"
-    "$BASE_DIR/runners.sh" stop "$name" || true
-  fi
 }
 
 migrate_runner() {
   local name="$1" path="$2" profile="$3" repo="$4" enabled="$5" group="$6"
   local unit
 
-  stop_legacy_runner "$name"
-  install_runner_service "$name" "$path" "$profile" "$repo" "$enabled" "$group"
-  unit="$(service_unit "$path")"
-  sudo systemctl enable "$unit" >/dev/null
-  sudo systemctl start "$unit"
+  [[ "$enabled" == true ]] || {
+    echo "[SKIP] $name desabilitado"
+    return 0
+  }
+  [[ -d "$path" ]] || die "$name: pasta ausente: $path"
+  [[ -x "$path/svc.sh" ]] || die "$name: svc.sh ausente"
+  [[ -f "$path/.runner" ]] || die "$name: .runner ausente"
 
-  if service_active "$unit"; then
-    info "[OK] $name migrado e ativo ($unit)"
+  if [[ -x "$BASE_DIR/runners.sh" ]]; then
+    "$BASE_DIR/runners.sh" stop "$name" || true
+  fi
+
+  if ! unit="$(service_unit "$path" 2>/dev/null)"; then
+    echo "[MIGRATE] instalando $name como usuario $SERVICE_USER"
+    (cd "$path" && sudo ./svc.sh install "$SERVICE_USER")
+    unit="$(service_unit "$path")"
+  fi
+
+  install_cache_dropin "$name" "$path" "$profile" "$repo" "$group"
+  sudo systemctl enable --now "$unit" >/dev/null
+
+  if systemctl is-active --quiet "$unit"; then
+    echo "[OK] $name -> $unit"
   else
     sudo systemctl status "$unit" --no-pager || true
-    die "$name: servico instalado, mas nao ficou ativo"
+    die "$name nao ficou ativo"
   fi
 }
 
-uninstall_runner_service() {
+uninstall_runner() {
   local name="$1" path="$2"
   local unit
   unit="$(service_unit "$path" 2>/dev/null || true)"
-  if [[ -z "$unit" ]]; then
-    info "[SKIP] $name ainda nao possui servico"
+  [[ -n "$unit" ]] || {
+    echo "[SKIP] $name ainda esta em modo legado"
     return 0
-  fi
+  }
 
   sudo systemctl stop "$unit" 2>/dev/null || true
   sudo systemctl disable "$unit" 2>/dev/null || true
   (cd "$path" && sudo ./svc.sh uninstall)
   rm -f "$SERVICE_ENV_DIR/$name.env"
-  info "[OK] $name removido do systemd; registro GitHub preservado"
+  echo "[OK] $name removido do systemd; runner GitHub preservado"
 }
 
 operate_runner() {
   local action="$1" name="$2" path="$3"
   local unit
   unit="$(service_unit "$path" 2>/dev/null || true)"
-  [[ -n "$unit" ]] || die "$name: ainda nao migrado. Use './runner-services.sh migrate $name'"
+  [[ -n "$unit" ]] || die "$name ainda nao foi migrado"
 
   case "$action" in
-    start)
-      sudo systemctl start "$unit"
-      ;;
-    stop)
-      sudo systemctl stop "$unit"
-      ;;
-    restart)
-      sudo systemctl restart "$unit"
+    start|stop|restart)
+      sudo systemctl "$action" "$unit"
       ;;
     status)
-      printf '%-24s %-12s %-8s %s\n' "$name" "$(systemctl is-active "$unit" 2>/dev/null || true)" "$(systemctl is-enabled "$unit" 2>/dev/null || true)" "$unit"
+      printf '%-24s %-12s %-10s %s\n'         "$name"         "$(systemctl is-active "$unit" 2>/dev/null || true)"         "$(systemctl is-enabled "$unit" 2>/dev/null || true)"         "$unit"
       ;;
     logs)
-      sudo journalctl -u "$unit" -n "$SERVICE_LOG_LINES" --no-pager
-      ;;
-    *)
-      die "acao de servico desconhecida: $action"
+      sudo journalctl -u "$unit" -n "$LOG_LINES" --no-pager
       ;;
   esac
 }
 
-list_runner() {
-  local name="$1" path="$2" profile="$3" repo="$4" enabled="$5" group="$6"
-  local unit="-" active="legacy"
-  if service_installed "$path"; then
-    unit="$(service_unit "$path")"
-    active="$(systemctl is-active "$unit" 2>/dev/null || true)"
-  fi
-  printf '%-24s %-12s %-12s %-8s %-14s %s\n' "$name" "$group" "$profile" "$enabled" "$active" "$unit"
-}
-
 doctor_runner() {
   local name="$1" path="$2"
-  local errors=0 unit
+  local unit
+  printf '%-24s ' "$name"
 
-  printf '\n[%s]\n' "$name"
-  if [[ -d "$path" ]]; then
-    echo "  OK dir: $path"
-  else
-    echo "  ERRO dir ausente: $path"
-    errors=$((errors + 1))
+  if [[ ! -d "$path" ]]; then
+    echo "ERRO pasta ausente"
+    return 1
   fi
-
-  if [[ -x "$path/svc.sh" ]]; then
-    echo "  OK svc.sh"
-  else
-    echo "  ERRO svc.sh ausente"
-    errors=$((errors + 1))
-  fi
-
-  if [[ -f "$path/.runner" ]]; then
-    echo "  OK registro .runner"
-  else
-    echo "  ERRO .runner ausente"
-    errors=$((errors + 1))
+  if [[ ! -x "$path/svc.sh" || ! -f "$path/.runner" ]]; then
+    echo "ERRO runner incompleto"
+    return 1
   fi
 
   unit="$(service_unit "$path" 2>/dev/null || true)"
   if [[ -n "$unit" ]]; then
-    echo "  OK systemd: $unit ($(systemctl is-active "$unit" 2>/dev/null || true))"
+    echo "OK systemd=$unit state=$(systemctl is-active "$unit" 2>/dev/null || true)"
   else
-    echo "  INFO ainda em modo legado"
+    echo "OK legacy"
   fi
+}
 
-  return "$errors"
+process_config() {
+  local action="$1" target="$2"
+  local raw name path profile repo enabled group rest matched=0 failures=0
+
+  while IFS= read -r raw || [[ -n "$raw" ]]; do
+    raw="$(trim "${raw//$'\r'/}")"
+    [[ -z "$raw" || "${raw:0:1}" == "#" ]] && continue
+
+    IFS='|' read -r name path profile repo enabled group rest <<< "$raw"
+    name="$(trim "${name:-}")"
+    path="$(trim "${path:-}")"
+    profile="$(trim "${profile:-generic}")"
+    repo="$(trim "${repo:-}")"
+    enabled="$(trim "${enabled:-true}")"
+    group="$(trim "${group:-}")"
+    [[ -n "$group" ]] || group="$(infer_group "$name" "$repo")"
+    group="$(normalize_slug "$group")"
+
+    matches_target "$target" "$name" "$group" || continue
+    matched=1
+
+    case "$action" in
+      list)
+        local unit state
+        unit="$(service_unit "$path" 2>/dev/null || true)"
+        state=legacy
+        [[ -n "$unit" ]] && state="$(systemctl is-active "$unit" 2>/dev/null || true)"
+        printf '%-24s %-14s %-12s %-10s %s\n' "$name" "$group" "$profile" "$state" "${unit:--}"
+        ;;
+      doctor)
+        doctor_runner "$name" "$path" || failures=$((failures + 1))
+        ;;
+      migrate)
+        migrate_runner "$name" "$path" "$profile" "$repo" "$enabled" "$group"
+        ;;
+      uninstall)
+        uninstall_runner "$name" "$path"
+        ;;
+      start|stop|restart|status|logs)
+        operate_runner "$action" "$name" "$path"
+        ;;
+    esac
+  done < "$CONFIG_PATH"
+
+  [[ "$matched" -eq 1 ]] || die "target nao encontrado: $target"
+  [[ "$failures" -eq 0 ]] || die "$failures runner(s) com problema"
 }
 
 main() {
   local action="${1:-help}"
   local target="${2:-all}"
-  local i name path profile repo enabled group
-  local failures=0
 
   case "$action" in
     help|-h|--help)
       usage
-      return 0
+      exit 0
       ;;
-    list|install|migrate|uninstall|start|stop|restart|status|logs|doctor)
+    list|doctor|migrate|uninstall|start|stop|restart|status|logs)
       ;;
     *)
       usage
@@ -458,51 +305,14 @@ main() {
       ;;
   esac
 
-  read_config
+  [[ -f "$CONFIG_PATH" ]] || die "runners.conf nao encontrado: $CONFIG_PATH"
   require_systemd
 
-  if [[ "$action" != "list" && "$action" != "doctor" && "$action" != "status" ]]; then
-    require_sudo
+  if [[ "$action" == list ]]; then
+    printf '%-24s %-14s %-12s %-10s %s\n' "RUNNER" "GROUP" "PROFILE" "STATE" "SYSTEMD UNIT"
   fi
 
-  if [[ "$action" == "list" ]]; then
-    printf '%-24s %-12s %-12s %-8s %-14s %s\n' "RUNNER" "GROUP" "PROFILE" "ENABLED" "STATE" "SYSTEMD UNIT"
-  fi
-
-  while IFS= read -r i; do
-    [[ -n "$i" ]] || continue
-    name="${RUNNER_NAMES[$i]}"
-    path="${RUNNER_PATHS[$i]}"
-    profile="${RUNNER_PROFILES[$i]}"
-    repo="${RUNNER_REPOS[$i]}"
-    enabled="${RUNNER_ENABLED[$i]}"
-    group="${RUNNER_GROUPS[$i]}"
-
-    case "$action" in
-      list)
-        list_runner "$name" "$path" "$profile" "$repo" "$enabled" "$group"
-        ;;
-      install)
-        install_runner_service "$name" "$path" "$profile" "$repo" "$enabled" "$group"
-        ;;
-      migrate)
-        migrate_runner "$name" "$path" "$profile" "$repo" "$enabled" "$group"
-        ;;
-      uninstall)
-        uninstall_runner_service "$name" "$path"
-        ;;
-      start|stop|restart|status|logs)
-        operate_runner "$action" "$name" "$path"
-        ;;
-      doctor)
-        doctor_runner "$name" "$path" || failures=$((failures + 1))
-        ;;
-    esac
-  done < <(target_indexes "$target")
-
-  if [[ "$failures" -gt 0 ]]; then
-    die "$failures runner(s) com problema"
-  fi
+  process_config "$action" "$target"
 }
 
 main "$@"
