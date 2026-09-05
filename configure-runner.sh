@@ -2,6 +2,8 @@
 set -euo pipefail
 
 BASE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=/dev/null
+source "$BASE_DIR/runner-runtime-env.sh"
 GITHUB_LINE=""
 NAME=""
 LABELS="local-runner"
@@ -335,7 +337,7 @@ fi
 
 BASE_DIR="$(realpath -m "$BASE_DIR")"
 TAR_PATH="$BASE_DIR/$RUNNER_TAR"
-CONFIG_PATH="$BASE_DIR/runners.conf"
+CONFIG_PATH="$(realpath -m "$RUNNERS_CONFIG")"
 GITIGNORE_PATH="$BASE_DIR/.gitignore"
 
 if [[ "$REPLACE" -eq 0 ]]; then
