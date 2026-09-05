@@ -2,6 +2,9 @@
 set -euo pipefail
 
 BASE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=/dev/null
+source "$BASE_DIR/runner-runtime-env.sh"
+RUNNER_ROOT="$RUNNER_DATA_ROOT"
 GITHUB_LINE=""
 NAME=""
 LABELS="local-runner"
@@ -25,7 +28,8 @@ Opcoes:
   --profile VALUE       perfil tecnico: auto, generic, node, python, flutter, android, java, dotnet, go
   --group VALUE         grupo operacional: auto, neurotrack, agentsorch, ea-fc, roboapostas ou outro slug
   --enabled VALUE       true/false no runners.conf
-  --base-dir VALUE      diretorio base dos runners
+  --base-dir VALUE      diretorio da instalacao/arquivos da plataforma
+  --runner-root VALUE    diretorio local onde novas instancias de runner serao criadas
   --runner-tar VALUE    arquivo .tar.gz do GitHub Actions Runner
   --expected-sha256 V   checksum esperado do tarball
   --work-folder VALUE   pasta de work do runner
@@ -275,6 +279,10 @@ while (($#)); do
       BASE_DIR="${2:-}"
       shift 2
       ;;
+    --runner-root)
+      RUNNER_ROOT="${2:-}"
+      shift 2
+      ;;
     --runner-tar)
       RUNNER_TAR="${2:-}"
       shift 2
@@ -334,12 +342,12 @@ else
 fi
 
 BASE_DIR="$(realpath -m "$BASE_DIR")"
+RUNNER_ROOT="$(realpath -m "$RUNNER_ROOT")"
 TAR_PATH="$BASE_DIR/$RUNNER_TAR"
-CONFIG_PATH="$BASE_DIR/runners.conf"
-GITIGNORE_PATH="$BASE_DIR/.gitignore"
+CONFIG_PATH="$(realpath -m "$RUNNERS_CONFIG")"
 
 if [[ "$REPLACE" -eq 0 ]]; then
-  NAME="$(next_available_runner_name "$CONFIG_PATH" "$BASE_DIR" "$REQUESTED_NAME")"
+  NAME="$(next_available_runner_name "$CONFIG_PATH" "$RUNNER_ROOT" "$REQUESTED_NAME")"
 fi
 
 # A label exclusiva da instancia acompanha exatamente o identificador/pasta final.
@@ -347,7 +355,7 @@ fi
 INSTANCE_LABEL="$NAME"
 LABELS="$(append_csv_label "$LABELS" "$INSTANCE_LABEL")"
 
-RUNNER_DIR="$BASE_DIR/$NAME"
+RUNNER_DIR="$RUNNER_ROOT/$NAME"
 MACHINE_NAME="$(hostname -s 2>/dev/null || hostname 2>/dev/null || true)"
 MACHINE_NAME="${MACHINE_NAME//[[:space:]]/-}"
 [[ -n "$MACHINE_NAME" ]] || die "nao foi possivel identificar o nome da maquina"
@@ -367,6 +375,8 @@ echo "Profile: $PROFILE"
 echo "Group: $GROUP"
 echo "Enabled: $ENABLED"
 echo "Pasta: $RUNNER_DIR"
+echo "Runner root: $RUNNER_ROOT"
+echo "Registry: $CONFIG_PATH"
 echo "Tarball: $TAR_PATH"
 echo "Token: ****"
 
@@ -379,7 +389,7 @@ echo "Checksum OK"
 
 step "Criando pasta do runner"
 
-mkdir -p "$BASE_DIR"
+mkdir -p "$RUNNER_ROOT"
 if [[ -d "$RUNNER_DIR" && "$REPLACE" -eq 1 ]]; then
   echo "Removendo pasta existente: $RUNNER_DIR"
   rm -rf "$RUNNER_DIR"
@@ -401,13 +411,6 @@ step "Atualizando runners.conf"
 update_runners_conf "$CONFIG_PATH" "$NAME" "$RUNNER_DIR" "$PROFILE" "$REPO_FULL_NAME" "$ENABLED" "$GROUP"
 echo "Atualizado: $CONFIG_PATH"
 echo "$NAME|$RUNNER_DIR|$PROFILE|$REPO_FULL_NAME|$ENABLED|$GROUP"
-
-step "Atualizando .gitignore"
-
-update_gitignore "$GITIGNORE_PATH" "$REQUESTED_NAME" "$NAME"
-echo "Atualizado: $GITIGNORE_PATH"
-echo "/$NAME/"
-echo "/$REQUESTED_NAME-[0-9]*/"
 
 step "Executando config.sh"
 

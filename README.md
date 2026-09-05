@@ -12,28 +12,30 @@ Central Linux para operar múltiplos GitHub Actions self-hosted runners com:
 
 ## Estrutura
 
+O checkout Git contém a **plataforma**, não o inventário da máquina:
+
 ```text
-/home/alangomes/actions-runners/
+~/actions-runners/
 ├── configure-runner.sh
 ├── runners.sh
-├── runner-cache-env.sh
-├── cache.sh
-├── prewarm-cache.sh
-├── dashboard.py
-├── runners.conf
+├── runner-services.sh
+├── runner-runtime-env.sh
+├── init-machine-config.sh
+├── .env.example
+├── runners.conf.example
 ├── codex-skills/
-├── docs/
-├── templates/
-├── .runner-cache/
-├── .runner-logs/
-├── .runner-pids/
-├── agentsorch/
-├── agentsorch-2/
-├── neurotrack_ms/
-└── neurotrack_ms-2/
+└── docs/
 ```
 
-Cada pasta de runner representa uma instância registrada separadamente no GitHub.
+Estado específico da máquina fica fora do conteúdo versionado:
+
+```text
+~/.config/actions-runners/runners.conf
+~/.local/share/actions-runners/runners/<runner>/
+~/actions-runners/.env.local
+```
+
+Runners antigos podem continuar nos paths atuais; o registry guarda o caminho real de cada instância.
 
 ## Configurar um runner
 
@@ -113,37 +115,41 @@ node,neurotrack-ms,alan-runner,neurotrack_ms-2
 
 Você não precisa e não deve repetir `neurotrack_ms-2` em `--labels`. O mesmo vale para `agentsorch-2`, `agentsorch-3` e qualquer outro identificador final.
 
-## Gitignore de runners numerados
+## Configuração local por máquina
 
-Ao configurar um runner, o script adiciona:
+O inventário real não deve ser tratado como configuração de produto. Env define **onde** ficam os dados e qual a política de boot; o arquivo local define **quais** runners existem.
 
-```gitignore
-/agentsorch/
-/agentsorch-[0-9]*/
-```
-
-Assim, `agentsorch-2`, `agentsorch-3` e próximos runners não aparecem como conteúdo versionável.
-
-Se uma pasta já tiver sido adicionada ao índice antes da regra, remova apenas do índice:
+Inicialize uma máquina existente com:
 
 ```bash
-git rm -r --cached agentsorch-2
+bash ./init-machine-config.sh
 ```
 
-Não apague a pasta física do runner.
+Isso copia com segurança o registry atual para:
 
-## `runners.conf`
+```text
+~/.config/actions-runners/runners.conf
+```
 
-Formato atual:
+e cria `.env.local` semelhante a:
+
+```bash
+ACTIONS_RUNNERS_HOME="/home/me/actions-runners"
+RUNNERS_CONFIG="/home/me/.config/actions-runners/runners.conf"
+RUNNER_DATA_ROOT="/home/me/.local/share/actions-runners/runners"
+RUNNER_BOOT_POLICY="on-demand"
+```
+
+O formato do registry continua:
 
 ```properties
 # name|path|profile|repo|enabled|group
-agentsorch|/home/alangomes/actions-runners/agentsorch|python|oalangomes/agentsorch|true|agentsorch
-agentsorch-2|/home/alangomes/actions-runners/agentsorch-2|python|oalangomes/agentsorch|true|agentsorch
-neurotrack_ms|/home/alangomes/actions-runners/neurotrack_ms|node|oalangomes/NeuroTrack_MS|true|neurotrack
+my-api|/home/me/.local/share/actions-runners/runners/my-api|python|me/my-api|true|my-api
 ```
 
-Linhas antigas sem a sexta coluna continuam funcionando; o grupo é inferido pelo nome e repositório.
+Novas instâncias são criadas em `RUNNER_DATA_ROOT`, portanto cadastrar um projeto novo não altera mais o `.gitignore` do repositório.
+
+Durante a migração, o `runners.conf` histórico ainda pode existir no checkout como fallback. Ele só deve ser removido do Git depois que a cópia local externa for validada.
 
 ## Operar runners individuais
 
@@ -157,9 +163,11 @@ Linhas antigas sem a sexta coluna continuam funcionando; o grupo é inferido pel
 ./runners.sh logs agentsorch
 ```
 
-## Operação recomendada: systemd + Cockpit
+## Operação recomendada: systemd on-demand + Cockpit
 
-A migração nova move o lifecycle dos runners para o mecanismo oficial de serviço do GitHub Runner (`svc.sh` + `systemd`), preservando os runners, labels, toolchains e caches atuais.
+O lifecycle usa o mecanismo oficial do GitHub Runner (`svc.sh` + `systemd`), preservando labels, toolchains e caches.
+
+A política padrão é `RUNNER_BOOT_POLICY=on-demand`: a unit fica instalada, mas **disabled no boot**. O runner sobe somente quando a CLI/skill precisa dele.
 
 Comece validando sem alterar nada:
 
@@ -174,6 +182,15 @@ Migre somente uma instância primeiro:
 ./runner-services.sh migrate agentsorchnext-2
 ./runner-services.sh status agentsorchnext-2
 ./runner-services.sh logs agentsorchnext-2
+```
+
+Com policy on-demand, `migrate` instala a unit, prova que a sessão consegue permanecer ativa e volta para idle/boot disabled.
+
+Para alterar policy explicitamente:
+
+```bash
+./runner-services.sh on-demand all
+./runner-services.sh autostart agentsorchnext-2
 ```
 
 Cockpit é opcional e fornece UI para serviços, logs e métricas do host:
@@ -264,13 +281,15 @@ Outros exemplos:
 ./runners.sh status group:neurotrack
 ```
 
-Operar tudo:
+Operar tudo continua disponível para manutenção explícita:
 
 ```bash
-./runners.sh start all
-./runners.sh stop all
 ./runners.sh status all
+./runners.sh health all
+./runners.sh stop all
 ```
+
+Em uso normal, evite `start all`: skills e CLI devem iniciar somente os runners associados ao projeto atual.
 
 ## Cache persistente
 
@@ -419,7 +438,7 @@ host Ubuntu
 ## Validação
 
 ```bash
-bash -n configure-runner.sh runners.sh runner-services.sh setup-cockpit.sh cache.sh prewarm-cache.sh
+bash -n configure-runner.sh runners.sh runner-services.sh runner-runtime-env.sh init-machine-config.sh setup-cockpit.sh cache.sh prewarm-cache.sh
 python3 -m py_compile dashboard.py
 ./runners.sh list
 ./runners.sh groups

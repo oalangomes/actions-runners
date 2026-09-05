@@ -2,7 +2,10 @@
 set -euo pipefail
 
 BASE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CONFIG_PATH="${RUNNERS_CONFIG:-$BASE_DIR/runners.conf}"
+# shellcheck source=/dev/null
+source "$BASE_DIR/runner-runtime-env.sh"
+CONFIG_PATH="$RUNNERS_CONFIG"
+BOOT_POLICY="$RUNNER_BOOT_POLICY"
 CACHE_ENV_PATH="$BASE_DIR/runner-cache-env.sh"
 SERVICE_ENV_DIR="$BASE_DIR/.runner-service-env"
 SERVICE_USER="${RUNNER_SERVICE_USER:-${SUDO_USER:-$USER}}"
@@ -17,7 +20,9 @@ Acoes:
   list       lista runners e units systemd
   plan       mostra o que seria migrado/reativado sem alterar nada
   doctor     valida systemd e arquivos do runner
-  migrate    para modo legado, instala/ativa svc.sh e preserva cache
+  migrate    instala svc.sh, preserva cache e aplica RUNNER_BOOT_POLICY
+  on-demand  desabilita autostart e para runner(s)
+  autostart  habilita autostart e inicia runner(s)
   uninstall  remove apenas o servico systemd
   start      inicia runner(s) ja migrado(s)
   stop       para runner(s) ja migrado(s)
@@ -30,6 +35,8 @@ Exemplos:
   ./runner-services.sh plan all
   ./runner-services.sh migrate agentsorchnext-2
   ./runner-services.sh migrate group:agentsorch
+  ./runner-services.sh on-demand all
+  ./runner-services.sh autostart agentsorchnext-2
   ./runner-services.sh status all
 USAGE
 }
@@ -227,14 +234,52 @@ migrate_runner() {
   fi
 
   install_cache_dropin "$name" "$path" "$profile" "$repo" "$group"
-  sudo systemctl enable --now "$unit" >/dev/null
 
-  if systemctl is-active --quiet "$unit"; then
-    echo "[OK] $name -> $unit"
+  if [[ "$BOOT_POLICY" == "on-demand" ]]; then
+    sudo systemctl disable "$unit" >/dev/null 2>&1 || true
+    sudo systemctl start "$unit"
+    sleep "${RUNNER_SYSTEMD_START_SETTLE_SECONDS:-3}"
+    if ! systemctl is-active --quiet "$unit"; then
+      sudo systemctl status "$unit" --no-pager || true
+      die "$name nao permaneceu ativo durante validacao on-demand"
+    fi
+    sudo systemctl stop "$unit"
+    echo "[OK] $name -> $unit policy=on-demand boot=disabled state=idle"
   else
-    sudo systemctl status "$unit" --no-pager || true
-    die "$name nao ficou ativo"
+    sudo systemctl enable --now "$unit" >/dev/null
+    if systemctl is-active --quiet "$unit"; then
+      echo "[OK] $name -> $unit policy=auto"
+    else
+      sudo systemctl status "$unit" --no-pager || true
+      die "$name nao ficou ativo"
+    fi
   fi
+}
+
+set_boot_policy_runner() {
+  local mode="$1" name="$2" path="$3"
+  local unit
+
+  unit="$(service_unit "$path" 2>/dev/null || true)"
+  [[ -n "$unit" ]] || die "$name ainda nao foi migrado"
+
+  case "$mode" in
+    on-demand)
+      sudo systemctl disable "$unit" >/dev/null 2>&1 || true
+      sudo systemctl stop "$unit" >/dev/null 2>&1 || true
+      echo "[OK] $name policy=on-demand state=idle boot=$(systemctl is-enabled "$unit" 2>/dev/null || true)"
+      ;;
+    autostart)
+      sudo systemctl enable --now "$unit" >/dev/null
+      sleep "${RUNNER_SYSTEMD_START_SETTLE_SECONDS:-3}"
+      if systemctl is-active --quiet "$unit"; then
+        echo "[OK] $name policy=auto state=active boot=enabled"
+      else
+        sudo systemctl status "$unit" --no-pager || true
+        return 1
+      fi
+      ;;
+  esac
 }
 
 uninstall_runner() {
@@ -260,7 +305,17 @@ operate_runner() {
   [[ -n "$unit" ]] || die "$name ainda nao foi migrado"
 
   case "$action" in
-    start|stop|restart)
+    start)
+      sudo systemctl start "$unit"
+      sleep "${RUNNER_SYSTEMD_START_SETTLE_SECONDS:-3}"
+      if systemctl is-active --quiet "$unit"; then
+        echo "[OK] $name state=active policy=$BOOT_POLICY unit=$unit"
+      else
+        echo "[ERR] $name nao permaneceu ativo unit=$unit" >&2
+        return 1
+      fi
+      ;;
+    stop|restart)
       sudo systemctl "$action" "$unit"
       ;;
     status)
@@ -288,6 +343,9 @@ plan_runner() {
     action="none"
     if [[ "$state" != "active" ]] && registration_deleted "$unit"; then
       action="reconfigure"
+    elif [[ "$BOOT_POLICY" == "on-demand" ]]; then
+      [[ "$boot" == "enabled" ]] && action="disable-boot"
+      [[ "$state" == "failed" ]] && action="repair"
     elif [[ "$state" != "active" || "$boot" != "enabled" ]]; then
       action="repair/start"
     fi
@@ -327,7 +385,7 @@ doctor_runner() {
       echo "ERRO systemd=$unit registration=deleted action=reconfigure"
       return 1
     fi
-    echo "OK systemd=$unit state=$(systemctl is-active "$unit" 2>/dev/null || true)"
+    echo "OK systemd=$unit state=$(systemctl is-active "$unit" 2>/dev/null || true) boot=$(systemctl is-enabled "$unit" 2>/dev/null || true) policy=$BOOT_POLICY"
   else
     echo "OK legacy"
   fi
@@ -371,6 +429,9 @@ process_config() {
       migrate)
         migrate_runner "$name" "$path" "$profile" "$repo" "$enabled" "$group"
         ;;
+      on-demand|autostart)
+        set_boot_policy_runner "$action" "$name" "$path"
+        ;;
       uninstall)
         uninstall_runner "$name" "$path"
         ;;
@@ -393,7 +454,7 @@ main() {
       usage
       exit 0
       ;;
-    list|plan|doctor|migrate|uninstall|start|stop|restart|status|logs)
+    list|plan|doctor|migrate|on-demand|autostart|uninstall|start|stop|restart|status|logs)
       ;;
     *)
       usage

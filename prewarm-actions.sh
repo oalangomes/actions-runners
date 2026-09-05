@@ -2,7 +2,9 @@
 set -euo pipefail
 
 BASE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CONFIG_PATH="${RUNNERS_CONFIG:-$BASE_DIR/runners.conf}"
+# shellcheck source=/dev/null
+source "$BASE_DIR/runner-runtime-env.sh"
+CONFIG_PATH="$RUNNERS_CONFIG"
 FORCE=0
 TARGET="all"
 ACTIONS=(

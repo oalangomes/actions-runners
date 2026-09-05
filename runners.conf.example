@@ -1,0 +1,8 @@
+# Machine-local runner registry.
+# Copy this file to the path configured by RUNNERS_CONFIG.
+# Format:
+# name|path|profile|repo|enabled|group
+#
+# Examples only:
+# my-api|/home/me/actions-runners/my-api|python|my-user/my-api|true|my-api
+# my-web|/home/me/actions-runners/my-web|node|my-user/my-web|true|my-web
