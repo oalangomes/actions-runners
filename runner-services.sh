@@ -240,6 +240,31 @@ write_service_env() {
   printf '%s\n' "$env_file"
 }
 
+write_runner_path() {
+  local name="$1"
+  local path="$2"
+  local profile="$3"
+  local repo="$4"
+  local group="$5"
+  local tmp
+
+  [[ -f "$CACHE_ENV_PATH" ]] || return 0
+  tmp="$(mktemp)"
+
+  (
+    export LOCAL_RUNNER_NAME="$name"
+    export LOCAL_RUNNER_PROFILE="$profile"
+    export LOCAL_RUNNER_REPO="$repo"
+    export LOCAL_RUNNER_GROUP="$group"
+    # shellcheck source=/dev/null
+    source "$CACHE_ENV_PATH"
+    printf '%s\n' "$PATH"
+  ) > "$tmp"
+
+  install -m 0644 "$tmp" "$path/.path"
+  rm -f "$tmp"
+}
+
 install_env_dropin() {
   local name="$1"
   local path="$2"
@@ -294,6 +319,7 @@ install_runner_service() {
   fi
 
   install_env_dropin "$name" "$path" "$profile" "$repo" "$group"
+  write_runner_path "$name" "$path" "$profile" "$repo" "$group"
   info "[OK] $name -> $unit"
 }
 
