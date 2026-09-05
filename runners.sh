@@ -436,8 +436,18 @@ start_runner() {
     require_systemd_for_runner "$name"
     unit="$(runner_service_unit "$path")"
     systemctl_mutate start "$unit"
-    echo "[OK] $name iniciado backend=systemd unit=$unit"
-    return 0
+
+    # systemctl start can succeed even when the GitHub listener exits seconds
+    # later (for example, when the remote runner registration was deleted).
+    sleep "${RUNNER_SYSTEMD_START_SETTLE_SECONDS:-3}"
+    if systemctl is-active --quiet "$unit" 2>/dev/null; then
+      echo "[OK] $name iniciado backend=systemd unit=$unit"
+      return 0
+    fi
+
+    echo "[ERR] $name nao permaneceu ativo backend=systemd unit=$unit" >&2
+    echo "      use: ./runners.sh logs $name" >&2
+    return 1
   fi
 
   [[ -d "$path" ]] || die "$name: diretorio nao encontrado: $path"
