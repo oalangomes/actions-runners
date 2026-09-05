@@ -6,6 +6,7 @@ SOURCE_CONFIG="$BASE_DIR/runners.conf"
 TARGET_CONFIG="${RUNNERS_CONFIG_TARGET:-${XDG_CONFIG_HOME:-$HOME/.config}/actions-runners/runners.conf}"
 ENV_FILE="${ACTIONS_RUNNERS_ENV:-$BASE_DIR/.env.local}"
 BOOT_POLICY="${RUNNER_BOOT_POLICY:-on-demand}"
+DATA_ROOT="${RUNNER_DATA_ROOT:-${XDG_DATA_HOME:-$HOME/.local/share}/actions-runners/runners}"
 
 die() {
   echo "ERRO: $*" >&2
@@ -32,6 +33,7 @@ fi
 cat > "$ENV_FILE" <<EOF
 ACTIONS_RUNNERS_HOME="$BASE_DIR"
 RUNNERS_CONFIG="$TARGET_CONFIG"
+RUNNER_DATA_ROOT="$DATA_ROOT"
 RUNNER_BOOT_POLICY="$BOOT_POLICY"
 EOF
 chmod 600 "$ENV_FILE"
