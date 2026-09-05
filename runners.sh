@@ -148,10 +148,13 @@ systemctl_mutate() {
 journalctl_runner() {
   local unit="$1"
   local lines="${RUNNER_LOG_LINES:-200}"
-  if journalctl -u "$unit" -n "$lines" --no-pager 2>/dev/null; then
-    return 0
-  fi
-  if command -v sudo >/dev/null 2>&1; then
+
+  # Decide permission before streaming. A downstream consumer such as
+  # `head` may close the pipe early and make journalctl exit with SIGPIPE;
+  # that must not be mistaken for a permission failure and retried via sudo.
+  if journalctl -u "$unit" -n 1 --no-pager >/dev/null 2>&1; then
+    journalctl -u "$unit" -n "$lines" --no-pager
+  elif command -v sudo >/dev/null 2>&1; then
     sudo journalctl -u "$unit" -n "$lines" --no-pager
   else
     journalctl -u "$unit" -n "$lines" --no-pager
