@@ -239,20 +239,6 @@ Não exponha a porta administrativa diretamente à internet. Para acesso remoto,
 
 Mais detalhes em [docs/systemd-cockpit-migration.md](docs/systemd-cockpit-migration.md).
 
-## Dashboard legado
-
-`dashboard.py` e o fluxo Docker permanecem apenas para compatibilidade temporária.
-
-O dashboard já respeita `RUNNERS_CONFIG`, mas novas capacidades administrativas devem preferir `runners.sh`, systemd/journal e Cockpit.
-
-```bash
-./start-dashboard.sh
-# ou
-./start-dashboard-docker.sh
-```
-
-A remoção definitiva do backend legado deve acontecer em uma fase própria, depois de confirmar que nenhuma dependência operacional permanece.
-
 ## Workflows de exemplo
 
 ```text
@@ -287,7 +273,6 @@ bash -n \
   prewarm-cache.sh \
   prewarm-actions.sh
 
-python3 -m py_compile dashboard.py
 ./install-agent-skills.sh --tool all --dry-run
 ./runners.sh list
 ./runners.sh health all
@@ -300,7 +285,7 @@ python3 -m py_compile dashboard.py
 - use labels específicas por repositório e capacidade;
 - mantenha permissões mínimas no `GITHUB_TOKEN`;
 - mantenha registration tokens fora de logs, commits e documentação;
-- não exponha Docker socket, bancos, dashboards ou painéis administrativos à internet;
+- não exponha Docker socket, bancos ou painéis administrativos à internet;
 - use containers ou usuários isolados para código não confiável;
 - faça backup de configuração e caches importantes, não de `_work`.
 
@@ -314,4 +299,4 @@ python3 -m py_compile dashboard.py
 
 A direção atual é **systemd-first + on-demand + machine-local configuration**.
 
-Compatibilidade com lifecycle/dashboard legado ainda existe para migração, mas não representa o caminho recomendado para novas instalações.
+Compatibilidade com lifecycle legado ainda existe apenas para migração; novas instalações devem usar systemd.
