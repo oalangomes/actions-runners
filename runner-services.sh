@@ -105,6 +105,31 @@ matches_target() {
   [[ "$target" == all || "$target" == "$name" || "$target" == "group:$group" ]]
 }
 
+registration_deleted() {
+  local unit="$1"
+  local log deleted_line healthy_line
+
+  log="$(journalctl -u "$unit" -n 120 --no-pager 2>/dev/null || true)"
+  [[ -n "$log" ]] || return 1
+
+  deleted_line="$(
+    printf '%s\n' "$log" |
+      grep -nF 'runner registration has been deleted from the server' |
+      tail -n 1 |
+      cut -d: -f1 || true
+  )"
+  [[ -n "$deleted_line" ]] || return 1
+
+  healthy_line="$(
+    printf '%s\n' "$log" |
+      grep -nE 'Listening for Jobs|Runner reconnected' |
+      tail -n 1 |
+      cut -d: -f1 || true
+  )"
+
+  [[ -z "$healthy_line" || "$deleted_line" -gt "$healthy_line" ]]
+}
+
 escape_env() {
   local value="$1"
   value="${value//\\/\\\\}"
@@ -191,7 +216,11 @@ migrate_runner() {
     "$BASE_DIR/runners.sh" stop "$name" || true
   fi
 
-  if ! unit="$(service_unit "$path" 2>/dev/null)"; then
+  if unit="$(service_unit "$path" 2>/dev/null)"; then
+    if registration_deleted "$unit"; then
+      die "$name: registro remoto do GitHub foi deletado; reconfigure o runner antes de migrar/iniciar"
+    fi
+  else
     echo "[MIGRATE] instalando $name como usuario $SERVICE_USER"
     (cd "$path" && sudo ./svc.sh install "$SERVICE_USER")
     unit="$(service_unit "$path")"
@@ -257,7 +286,11 @@ plan_runner() {
     state="$(systemctl is-active "$unit" 2>/dev/null || true)"
     boot="$(systemctl is-enabled "$unit" 2>/dev/null || true)"
     action="none"
-    [[ "$state" == "active" && "$boot" == "enabled" ]] || action="repair/start"
+    if [[ "$state" != "active" ]] && registration_deleted "$unit"; then
+      action="reconfigure"
+    elif [[ "$state" != "active" || "$boot" != "enabled" ]]; then
+      action="repair/start"
+    fi
     printf '%-24s %-14s %-12s %-12s %-14s %s\n' "$name" "$group" "$profile" "systemd:$state" "$boot" "$action"
     return 0
   fi
@@ -290,6 +323,10 @@ doctor_runner() {
 
   unit="$(service_unit "$path" 2>/dev/null || true)"
   if [[ -n "$unit" ]]; then
+    if registration_deleted "$unit"; then
+      echo "ERRO systemd=$unit registration=deleted action=reconfigure"
+      return 1
+    fi
     echo "OK systemd=$unit state=$(systemctl is-active "$unit" 2>/dev/null || true)"
   else
     echo "OK legacy"
