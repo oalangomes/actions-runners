@@ -16,7 +16,7 @@ This repository manages local GitHub Actions self-hosted runners.
 
 - Keep public examples generic; do not add maintainer usernames, hostnames or project names.
 - Prefer repository slug as the default group; project-specific grouping belongs in machine-local configuration.
-- Do not expand the legacy PID/dashboard lifecycle. New operational features should use systemd/journal/Cockpit.
+- Do not expand the legacy PID lifecycle. New operational features should use systemd/journal/Cockpit.
 - Preserve existing runner registrations and local directories unless a change explicitly targets migration/removal.
 
 ## Validation
@@ -26,13 +26,6 @@ For shell changes:
 ```bash
 bash -n configure-runner.sh runners.sh runner-services.sh runner-runtime-env.sh \
   init-machine-config.sh sync-local-git-excludes.sh install-agent-skills.sh
-```
-
-For the dashboard:
-
-```bash
-python3 -m py_compile dashboard.py
-docker compose config --quiet
 ```
 
 For Agent Skills:
