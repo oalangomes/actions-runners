@@ -2,7 +2,10 @@
 set -euo pipefail
 
 BASE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CONFIG_PATH="${RUNNERS_CONFIG:-$BASE_DIR/runners.conf}"
+# shellcheck source=/dev/null
+source "$BASE_DIR/runner-runtime-env.sh"
+CONFIG_PATH="$RUNNERS_CONFIG"
+BOOT_POLICY="$RUNNER_BOOT_POLICY"
 PID_DIR="$BASE_DIR/.runner-pids"
 LOG_DIR="$BASE_DIR/.runner-logs"
 CACHE_ENV_PATH="$BASE_DIR/runner-cache-env.sh"
@@ -597,8 +600,11 @@ status_runner() {
     boot_state="$(systemctl is-enabled "$unit" 2>/dev/null || true)"
     prefix="[STOP]"
     [[ "$state" == "active" ]] && prefix="[OK]"
+    if [[ "$BOOT_POLICY" == "on-demand" && "$state" == "inactive" ]]; then
+      prefix="[IDLE]"
+    fi
     [[ "$enabled" != "true" ]] && prefix="[DISABLED]"
-    echo "$prefix $name backend=systemd state=$state boot=$boot_state unit=$unit group=$group profile=$profile repo=${repo:-n/a} $path"
+    echo "$prefix $name backend=systemd state=$state boot=$boot_state policy=$BOOT_POLICY unit=$unit group=$group profile=$profile repo=${repo:-n/a} $path"
     return 0
   fi
 
@@ -679,8 +685,12 @@ doctor_runner() {
     if command -v systemctl >/dev/null 2>&1 && [[ -d /run/systemd/system ]]; then
       state="$(systemctl is-active "$unit" 2>/dev/null || true)"
       boot_state="$(systemctl is-enabled "$unit" 2>/dev/null || true)"
-      echo "[OK] backend=systemd unit=$unit state=$state boot=$boot_state"
-      [[ "$state" == "active" ]] || echo "[WARN] servico systemd nao esta ativo"
+      echo "[OK] backend=systemd unit=$unit state=$state boot=$boot_state policy=$BOOT_POLICY"
+      if [[ "$BOOT_POLICY" == "auto" && "$state" != "active" ]]; then
+        echo "[WARN] servico systemd nao esta ativo"
+      elif [[ "$BOOT_POLICY" == "on-demand" && "$state" == "failed" ]]; then
+        echo "[WARN] servico systemd esta failed"
+      fi
     else
       echo "[ERR] .service encontrado, mas systemd nao esta disponivel"
       ok=1
@@ -741,13 +751,23 @@ health_runner() {
     state="$(systemctl is-active "$unit" 2>/dev/null || true)"
     boot_state="$(systemctl is-enabled "$unit" 2>/dev/null || true)"
     if [[ "$enabled" != "true" ]]; then
-      echo "[INFO] $name group=$group backend=systemd desabilitado em runners.conf state=$state"
+      echo "[INFO] $name group=$group backend=systemd desabilitado em runners.conf state=$state policy=$BOOT_POLICY"
+    elif [[ "$BOOT_POLICY" == "on-demand" ]]; then
+      if [[ "$state" == "failed" ]]; then
+        echo "[CRITICAL] $name backend=systemd state=failed policy=on-demand unit=$unit"
+      elif [[ "$boot_state" == "enabled" ]]; then
+        echo "[WARN] $name backend=systemd state=$state boot=enabled policy=on-demand expected_boot=disabled unit=$unit"
+      elif [[ "$state" == "active" ]]; then
+        echo "[OK] $name backend=systemd state=active boot=$boot_state policy=on-demand group=$group"
+      else
+        echo "[OK] $name backend=systemd state=$state boot=$boot_state policy=on-demand idle=true group=$group"
+      fi
     elif [[ "$state" != "active" ]]; then
-      echo "[CRITICAL] $name backend=systemd state=$state unit=$unit"
+      echo "[CRITICAL] $name backend=systemd state=$state policy=auto unit=$unit"
     elif [[ "$boot_state" != "enabled" ]]; then
-      echo "[WARN] $name backend=systemd ativo, mas boot=$boot_state unit=$unit"
+      echo "[WARN] $name backend=systemd ativo, mas boot=$boot_state policy=auto unit=$unit"
     else
-      echo "[OK] $name backend=systemd state=active boot=enabled group=$group"
+      echo "[OK] $name backend=systemd state=active boot=enabled policy=auto group=$group"
     fi
     return 0
   fi
