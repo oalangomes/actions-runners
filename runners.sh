@@ -95,8 +95,33 @@ runner_pid() {
 
 runner_service_unit() {
   local path="$1"
-  [[ -f "$path/.service" ]] || return 1
-  tr -d '[:space:]' < "$path/.service"
+  local unit working_dir
+
+  if [[ -f "$path/.service" ]]; then
+    unit="$(tr -d '[:space:]' < "$path/.service")"
+    [[ -n "$unit" ]] && {
+      printf '%s\n' "$unit"
+      return 0
+    }
+  fi
+
+  # Fail safe: a missing local marker must not make a systemd-managed runner
+  # fall back to the legacy PID/process manager.
+  if command -v systemctl >/dev/null 2>&1 && [[ -d /run/systemd/system ]]; then
+    while read -r unit; do
+      [[ -n "$unit" ]] || continue
+      working_dir="$(systemctl show "$unit" --property=WorkingDirectory --value 2>/dev/null || true)"
+      if [[ "$working_dir" == "$path" ]]; then
+        printf '%s\n' "$unit"
+        return 0
+      fi
+    done < <(
+      systemctl list-unit-files 'actions.runner.*.service' --no-legend --no-pager 2>/dev/null |
+        awk '{print $1}'
+    )
+  fi
+
+  return 1
 }
 
 runner_uses_systemd() {
@@ -635,6 +660,9 @@ doctor_runner() {
   if runner_uses_systemd "$path"; then
     local unit state boot_state
     unit="$(runner_service_unit "$path")"
+    if [[ ! -f "$path/.service" ]]; then
+      echo "[WARN] unit systemd descoberta pelo WorkingDirectory; marcador .service ausente"
+    fi
     if command -v systemctl >/dev/null 2>&1 && [[ -d /run/systemd/system ]]; then
       state="$(systemctl is-active "$unit" 2>/dev/null || true)"
       boot_state="$(systemctl is-enabled "$unit" 2>/dev/null || true)"
