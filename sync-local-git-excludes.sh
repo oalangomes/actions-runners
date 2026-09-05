@@ -15,8 +15,9 @@ touch "$exclude_path"
 
 added=0
 while IFS='|' read -r name path _profile _repo _enabled _group _rest; do
-  [[ -n "${name//[[:space:]]/}" ]] || continue
-  [[ "${name#${name%%[![:space:]]*}}" == #* ]] && continue
+  trimmed_name="${name#"${name%%[![:space:]]*}"}"
+  [[ -n "$trimmed_name" ]] || continue
+  [[ "${trimmed_name:0:1}" == "#" ]] && continue
 
   path="${path#"${path%%[![:space:]]*}"}"
   path="${path%"${path##*[![:space:]]}"}"
