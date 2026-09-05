@@ -188,11 +188,23 @@ Guia completo:
 docs/systemd-cockpit-migration.md
 ```
 
-O `runners.sh` e o dashboard atual continuam disponíveis durante a transição.
+`runners.sh` passa a ser **systemd-first**: quando a pasta do runner possui `.service`, start/stop/restart/status/logs delegam para `systemctl`/`journalctl`. Runners ainda não migrados continuam usando o backend legado durante a transição.
 
-## Dashboard em Docker
+Exemplo:
 
-O painel pode ser executado isoladamente em Docker, mantendo acesso ao mesmo
+```bash
+./runners.sh status all
+./runners.sh restart group:agentsorch
+./runners.sh logs agentsorchnext-2
+```
+
+O output informa `backend=systemd` ou `backend=legacy` para deixar explícito quem controla cada instância.
+
+## Dashboard legado em Docker
+
+> Status: compatibilidade temporária. Para administração do host e runners systemd, prefira Cockpit + `runners.sh`. O dashboard próprio será aposentado depois que todos os runners forem migrados.
+
+O painel legado pode ser executado isoladamente em Docker, mantendo acesso ao mesmo
 arquivo de configuração, logs, cache e processos dos runners:
 
 Para iniciar o backend no host e o front Docker com um único comando:
@@ -299,7 +311,9 @@ Prewarm:
 ./prewarm-cache.sh all
 ```
 
-## Painel inteligente
+## Painel próprio legado
+
+Este painel continua disponível apenas durante a migração. Novas capacidades administrativas devem preferir Cockpit/systemd em vez de expandir `dashboard.py`.
 
 Subir:
 
@@ -334,9 +348,9 @@ RUNNERS_DASHBOARD_HOST=0.0.0.0 ./dashboard.py
 
 Proteja esse acesso com firewall ou VPN privada.
 
-## Proteção contra runner duplicado
+## Proteção contra runner duplicado no backend legado
 
-O `runners.sh` procura processos ligados à pasta:
+Para runners systemd, o lifecycle é responsabilidade da unit e essa detecção manual não é usada. Para runners ainda em modo legado, `runners.sh` procura processos ligados à pasta:
 
 ```text
 run.sh

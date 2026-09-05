@@ -26,7 +26,7 @@ Acoes:
   health     mostra alertas locais resumidos
   cache      mostra uso local de cache e workspaces
   prewarm-actions aquece actions comuns no _work/_actions
-  logs       mostra caminho do log
+  logs       mostra journal do systemd ou caminho do log legado
   help       mostra ajuda
 
 Exemplos:
@@ -91,6 +91,85 @@ runner_pid() {
   local file
   file="$(pid_file "$1")"
   [[ -f "$file" ]] && tr -d '[:space:]' < "$file"
+}
+
+runner_service_unit() {
+  local path="$1"
+  local unit working_dir
+
+  if [[ -f "$path/.service" ]]; then
+    unit="$(tr -d '[:space:]' < "$path/.service")"
+    [[ -n "$unit" ]] && {
+      printf '%s\n' "$unit"
+      return 0
+    }
+  fi
+
+  # Fail safe: a missing local marker must not make a systemd-managed runner
+  # fall back to the legacy PID/process manager.
+  if command -v systemctl >/dev/null 2>&1 && [[ -d /run/systemd/system ]]; then
+    while read -r unit; do
+      [[ -n "$unit" ]] || continue
+      working_dir="$(systemctl show "$unit" --property=WorkingDirectory --value 2>/dev/null || true)"
+      if [[ "$working_dir" == "$path" ]]; then
+        printf '%s\n' "$unit"
+        return 0
+      fi
+    done < <(
+      systemctl list-unit-files 'actions.runner.*.service' --no-legend --no-pager 2>/dev/null |
+        awk '{print $1}'
+    )
+  fi
+
+  return 1
+}
+
+runner_uses_systemd() {
+  local path="$1"
+  [[ -n "$(runner_service_unit "$path" 2>/dev/null || true)" ]]
+}
+
+require_systemd_for_runner() {
+  local name="$1"
+  command -v systemctl >/dev/null 2>&1 || die "$name: systemctl nao encontrado"
+  [[ -d /run/systemd/system ]] || die "$name: possui .service, mas systemd nao esta ativo"
+}
+
+systemctl_mutate() {
+  if [[ "$(id -u)" -eq 0 ]]; then
+    systemctl "$@"
+  elif command -v sudo >/dev/null 2>&1; then
+    sudo systemctl "$@"
+  else
+    systemctl "$@"
+  fi
+}
+
+journalctl_runner() {
+  local unit="$1"
+  local lines="${RUNNER_LOG_LINES:-200}"
+
+  # Decide permission before streaming. A downstream consumer such as
+  # `head` may close the pipe early and make journalctl exit with SIGPIPE;
+  # that must not be mistaken for a permission failure and retried via sudo.
+  if journalctl -u "$unit" -n 1 --no-pager >/dev/null 2>&1; then
+    journalctl -u "$unit" -n "$lines" --no-pager
+  elif command -v sudo >/dev/null 2>&1; then
+    sudo journalctl -u "$unit" -n "$lines" --no-pager
+  else
+    journalctl -u "$unit" -n "$lines" --no-pager
+  fi
+}
+
+runner_is_running() {
+  local path="$1"
+  local unit
+  if runner_uses_systemd "$path"; then
+    unit="$(runner_service_unit "$path")"
+    command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet "$unit" 2>/dev/null
+    return
+  fi
+  [[ -n "$(runner_primary_pid_by_path "$path")" ]]
 }
 
 command_exists() {
@@ -352,6 +431,15 @@ start_runner() {
     return 0
   fi
 
+  if runner_uses_systemd "$path"; then
+    local unit
+    require_systemd_for_runner "$name"
+    unit="$(runner_service_unit "$path")"
+    systemctl_mutate start "$unit"
+    echo "[OK] $name iniciado backend=systemd unit=$unit"
+    return 0
+  fi
+
   [[ -d "$path" ]] || die "$name: diretorio nao encontrado: $path"
   [[ -x "$run_sh" ]] || die "$name: run.sh nao encontrado ou sem permissao em: $path"
 
@@ -437,6 +525,16 @@ stop_runner() {
   local pid
   local primary_pid
 
+  if runner_uses_systemd "$path"; then
+    local unit
+    require_systemd_for_runner "$name"
+    unit="$(runner_service_unit "$path")"
+    systemctl_mutate stop "$unit"
+    rm -f "$(pid_file "$name")"
+    echo "[OK] $name parado backend=systemd unit=$unit"
+    return 0
+  fi
+
   pid="$(runner_pid "$name" || true)"
   primary_pid="$(runner_primary_pid_by_path "$path")"
 
@@ -481,21 +579,34 @@ status_runner() {
   local listener_count
   local worker_count
 
+  if runner_uses_systemd "$path"; then
+    local unit state boot_state prefix
+    require_systemd_for_runner "$name"
+    unit="$(runner_service_unit "$path")"
+    state="$(systemctl is-active "$unit" 2>/dev/null || true)"
+    boot_state="$(systemctl is-enabled "$unit" 2>/dev/null || true)"
+    prefix="[STOP]"
+    [[ "$state" == "active" ]] && prefix="[OK]"
+    [[ "$enabled" != "true" ]] && prefix="[DISABLED]"
+    echo "$prefix $name backend=systemd state=$state boot=$boot_state unit=$unit group=$group profile=$profile repo=${repo:-n/a} $path"
+    return 0
+  fi
+
   pid="$(runner_pid "$name" || true)"
   primary_pid="$(runner_primary_pid_by_path "$path")"
   listener_count="$(runner_listener_count_by_path "$path")"
   worker_count="$(runner_worker_count_by_path "$path")"
 
   if [[ "$enabled" != "true" ]]; then
-    echo "[DISABLED] $name group=$group profile=$profile repo=${repo:-n/a} $path"
+    echo "[DISABLED] $name backend=legacy group=$group profile=$profile repo=${repo:-n/a} $path"
   elif [[ "$listener_count" -gt 1 ]]; then
-    echo "[WARN] $name multiplos listeners=$(runner_listener_pids_by_path "$path" | paste -sd ',' -) workers=$worker_count group=$group profile=$profile repo=${repo:-n/a} $path"
+    echo "[WARN] $name backend=legacy multiplos listeners=$(runner_listener_pids_by_path "$path" | paste -sd ',' -) workers=$worker_count group=$group profile=$profile repo=${repo:-n/a} $path"
   elif is_running_pid "$pid" || [[ -n "$primary_pid" ]]; then
-    echo "[OK] $name rodando pid=${pid:-$primary_pid} $(runner_process_summary "$path") group=$group profile=$profile repo=${repo:-n/a} $path"
+    echo "[OK] $name backend=legacy rodando pid=${pid:-$primary_pid} $(runner_process_summary "$path") group=$group profile=$profile repo=${repo:-n/a} $path"
   elif [[ "$worker_count" -gt 0 ]]; then
-    echo "[WARN] $name worker orfao=$(runner_worker_pids_by_path "$path" | paste -sd ',' -) group=$group profile=$profile repo=${repo:-n/a} $path"
+    echo "[WARN] $name backend=legacy worker orfao=$(runner_worker_pids_by_path "$path" | paste -sd ',' -) group=$group profile=$profile repo=${repo:-n/a} $path"
   else
-    echo "[STOP] $name parado group=$group profile=$profile repo=${repo:-n/a} $path"
+    echo "[STOP] $name backend=legacy parado group=$group profile=$profile repo=${repo:-n/a} $path"
   fi
 }
 
@@ -549,10 +660,25 @@ doctor_runner() {
     echo "[WARN] .runner nao encontrado"
   fi
 
-  if runner_has_process_by_path "$path"; then
-    echo "[OK] processos: $(runner_process_summary "$path")"
+  if runner_uses_systemd "$path"; then
+    local unit state boot_state
+    unit="$(runner_service_unit "$path")"
+    if [[ ! -f "$path/.service" ]]; then
+      echo "[WARN] unit systemd descoberta pelo WorkingDirectory; marcador .service ausente"
+    fi
+    if command -v systemctl >/dev/null 2>&1 && [[ -d /run/systemd/system ]]; then
+      state="$(systemctl is-active "$unit" 2>/dev/null || true)"
+      boot_state="$(systemctl is-enabled "$unit" 2>/dev/null || true)"
+      echo "[OK] backend=systemd unit=$unit state=$state boot=$boot_state"
+      [[ "$state" == "active" ]] || echo "[WARN] servico systemd nao esta ativo"
+    else
+      echo "[ERR] .service encontrado, mas systemd nao esta disponivel"
+      ok=1
+    fi
+  elif runner_has_process_by_path "$path"; then
+    echo "[OK] backend=legacy processos: $(runner_process_summary "$path")"
   else
-    echo "[INFO] nenhum processo ativo detectado para este runner"
+    echo "[INFO] backend=legacy; nenhum processo ativo detectado para este runner"
   fi
 
   if [[ -f "$CACHE_ENV_PATH" ]]; then
@@ -594,6 +720,27 @@ health_runner() {
   local worker_count
   local shell_count
   local primary_pid
+
+  if runner_uses_systemd "$path"; then
+    local unit state boot_state
+    unit="$(runner_service_unit "$path")"
+    if ! command -v systemctl >/dev/null 2>&1 || [[ ! -d /run/systemd/system ]]; then
+      echo "[CRITICAL] $name backend=systemd mas systemd nao esta disponivel"
+      return 0
+    fi
+    state="$(systemctl is-active "$unit" 2>/dev/null || true)"
+    boot_state="$(systemctl is-enabled "$unit" 2>/dev/null || true)"
+    if [[ "$enabled" != "true" ]]; then
+      echo "[INFO] $name group=$group backend=systemd desabilitado em runners.conf state=$state"
+    elif [[ "$state" != "active" ]]; then
+      echo "[CRITICAL] $name backend=systemd state=$state unit=$unit"
+    elif [[ "$boot_state" != "enabled" ]]; then
+      echo "[WARN] $name backend=systemd ativo, mas boot=$boot_state unit=$unit"
+    else
+      echo "[OK] $name backend=systemd state=active boot=enabled group=$group"
+    fi
+    return 0
+  fi
 
   pid="$(runner_pid "$name" || true)"
   listener_count="$(runner_listener_count_by_path "$path")"
@@ -661,9 +808,17 @@ cache_runner() {
 }
 
 list_runners() {
-  local i
+  local i backend unit state
   for i in "${!RUNNER_NAMES[@]}"; do
-    echo "${RUNNER_NAMES[$i]} -> ${RUNNER_PATHS[$i]} group=${RUNNER_GROUPS[$i]} profile=${RUNNER_PROFILES[$i]} repo=${RUNNER_REPOS[$i]:-n/a} enabled=${RUNNER_ENABLED[$i]}"
+    backend="legacy"
+    unit=""
+    state=""
+    if runner_uses_systemd "${RUNNER_PATHS[$i]}"; then
+      backend="systemd"
+      unit="$(runner_service_unit "${RUNNER_PATHS[$i]}")"
+      state="$(systemctl is-active "$unit" 2>/dev/null || true)"
+    fi
+    echo "${RUNNER_NAMES[$i]} -> ${RUNNER_PATHS[$i]} backend=$backend${state:+ state=$state}${unit:+ unit=$unit} group=${RUNNER_GROUPS[$i]} profile=${RUNNER_PROFILES[$i]} repo=${RUNNER_REPOS[$i]:-n/a} enabled=${RUNNER_ENABLED[$i]}"
   done
 }
 
@@ -687,8 +842,7 @@ list_groups() {
       total=$((total + 1))
       if [[ "${RUNNER_ENABLED[$i]}" == "true" ]]; then
         enabled=$((enabled + 1))
-        primary_pid="$(runner_primary_pid_by_path "${RUNNER_PATHS[$i]}")"
-        if [[ -n "$primary_pid" ]]; then
+        if runner_is_running "${RUNNER_PATHS[$i]}"; then
           running=$((running + 1))
         fi
       fi
@@ -768,7 +922,13 @@ case "$ACTION" in
     ;;
   logs)
     for i in "${indexes[@]}"; do
-      echo "${RUNNER_NAMES[$i]} group=${RUNNER_GROUPS[$i]} -> $(log_file "${RUNNER_NAMES[$i]}")"
+      if runner_uses_systemd "${RUNNER_PATHS[$i]}"; then
+        unit="$(runner_service_unit "${RUNNER_PATHS[$i]}")"
+        echo "===== ${RUNNER_NAMES[$i]} group=${RUNNER_GROUPS[$i]} backend=systemd unit=$unit ====="
+        journalctl_runner "$unit"
+      else
+        echo "${RUNNER_NAMES[$i]} group=${RUNNER_GROUPS[$i]} backend=legacy -> $(log_file "${RUNNER_NAMES[$i]}")"
+      fi
     done
     ;;
 esac
