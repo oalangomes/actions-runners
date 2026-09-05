@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+BASE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SOURCE_CONFIG="$BASE_DIR/runners.conf"
+TARGET_CONFIG="${RUNNERS_CONFIG_TARGET:-${XDG_CONFIG_HOME:-$HOME/.config}/actions-runners/runners.conf}"
+ENV_FILE="${ACTIONS_RUNNERS_ENV:-$BASE_DIR/.env.local}"
+BOOT_POLICY="${RUNNER_BOOT_POLICY:-on-demand}"
+
+die() {
+  echo "ERRO: $*" >&2
+  exit 1
+}
+
+[[ "$BOOT_POLICY" == "on-demand" || "$BOOT_POLICY" == "auto" ]] ||
+  die "RUNNER_BOOT_POLICY invalido: $BOOT_POLICY"
+
+mkdir -p "$(dirname "$TARGET_CONFIG")"
+
+if [[ -f "$TARGET_CONFIG" ]]; then
+  echo "[KEEP] registry local ja existe: $TARGET_CONFIG"
+elif [[ -f "$SOURCE_CONFIG" ]]; then
+  cp "$SOURCE_CONFIG" "$TARGET_CONFIG"
+  chmod 600 "$TARGET_CONFIG"
+  echo "[OK] registry copiado para: $TARGET_CONFIG"
+else
+  cp "$BASE_DIR/runners.conf.example" "$TARGET_CONFIG"
+  chmod 600 "$TARGET_CONFIG"
+  echo "[OK] registry local criado a partir do exemplo: $TARGET_CONFIG"
+fi
+
+cat > "$ENV_FILE" <<EOF
+ACTIONS_RUNNERS_HOME="$BASE_DIR"
+RUNNERS_CONFIG="$TARGET_CONFIG"
+RUNNER_BOOT_POLICY="$BOOT_POLICY"
+EOF
+chmod 600 "$ENV_FILE"
+
+echo "[OK] env local: $ENV_FILE"
+echo
+echo "Valide antes de remover qualquer registry versionado:"
+echo "  ./runners.sh list"
+echo "  ./runners.sh health all"
+echo "  ./runner-services.sh plan all"
