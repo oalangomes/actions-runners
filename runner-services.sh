@@ -15,6 +15,7 @@ Uso:
 
 Acoes:
   list       lista runners e units systemd
+  plan       mostra o que seria migrado/reativado sem alterar nada
   doctor     valida systemd e arquivos do runner
   migrate    para modo legado, instala/ativa svc.sh e preserva cache
   uninstall  remove apenas o servico systemd
@@ -26,6 +27,7 @@ Acoes:
 
 Exemplos:
   ./runner-services.sh list
+  ./runner-services.sh plan all
   ./runner-services.sh migrate agentsorchnext-2
   ./runner-services.sh migrate group:agentsorch
   ./runner-services.sh status all
@@ -71,13 +73,61 @@ require_systemd() {
 
 service_unit() {
   local path="$1"
-  [[ -f "$path/.service" ]] || return 1
-  tr -d '[:space:]' < "$path/.service"
+  local unit working_dir
+
+  if [[ -f "$path/.service" ]]; then
+    unit="$(tr -d '[:space:]' < "$path/.service")"
+    [[ -n "$unit" ]] && {
+      printf '%s\n' "$unit"
+      return 0
+    }
+  fi
+
+  if command -v systemctl >/dev/null 2>&1 && [[ -d /run/systemd/system ]]; then
+    while read -r unit; do
+      [[ -n "$unit" ]] || continue
+      working_dir="$(systemctl show "$unit" --property=WorkingDirectory --value 2>/dev/null || true)"
+      if [[ "$working_dir" == "$path" ]]; then
+        printf '%s\n' "$unit"
+        return 0
+      fi
+    done < <(
+      systemctl list-unit-files 'actions.runner.*.service' --no-legend --no-pager 2>/dev/null |
+        awk '{print $1}'
+    )
+  fi
+
+  return 1
 }
 
 matches_target() {
   local target="$1" name="$2" group="$3"
   [[ "$target" == all || "$target" == "$name" || "$target" == "group:$group" ]]
+}
+
+registration_deleted() {
+  local unit="$1"
+  local log deleted_line healthy_line
+
+  log="$(journalctl -u "$unit" -n 120 --no-pager 2>/dev/null || true)"
+  [[ -n "$log" ]] || return 1
+
+  deleted_line="$(
+    printf '%s\n' "$log" |
+      grep -nF 'runner registration has been deleted from the server' |
+      tail -n 1 |
+      cut -d: -f1 || true
+  )"
+  [[ -n "$deleted_line" ]] || return 1
+
+  healthy_line="$(
+    printf '%s\n' "$log" |
+      grep -nE 'Listening for Jobs|Runner reconnected' |
+      tail -n 1 |
+      cut -d: -f1 || true
+  )"
+
+  [[ -z "$healthy_line" || "$deleted_line" -gt "$healthy_line" ]]
 }
 
 escape_env() {
@@ -166,7 +216,11 @@ migrate_runner() {
     "$BASE_DIR/runners.sh" stop "$name" || true
   fi
 
-  if ! unit="$(service_unit "$path" 2>/dev/null)"; then
+  if unit="$(service_unit "$path" 2>/dev/null)"; then
+    if registration_deleted "$unit"; then
+      die "$name: registro remoto do GitHub foi deletado; reconfigure o runner antes de migrar/iniciar"
+    fi
+  else
     echo "[MIGRATE] instalando $name como usuario $SERVICE_USER"
     (cd "$path" && sudo ./svc.sh install "$SERVICE_USER")
     unit="$(service_unit "$path")"
@@ -218,6 +272,41 @@ operate_runner() {
   esac
 }
 
+plan_runner() {
+  local name="$1" path="$2" profile="$3" repo="$4" enabled="$5" group="$6"
+  local unit state boot action reason
+
+  if [[ "$enabled" != true ]]; then
+    printf '%-24s %-14s %-12s %-12s %-14s %s\n' "$name" "$group" "$profile" "disabled" "-" "skip"
+    return 0
+  fi
+
+  unit="$(service_unit "$path" 2>/dev/null || true)"
+  if [[ -n "$unit" ]]; then
+    state="$(systemctl is-active "$unit" 2>/dev/null || true)"
+    boot="$(systemctl is-enabled "$unit" 2>/dev/null || true)"
+    action="none"
+    if [[ "$state" != "active" ]] && registration_deleted "$unit"; then
+      action="reconfigure"
+    elif [[ "$state" != "active" || "$boot" != "enabled" ]]; then
+      action="repair/start"
+    fi
+    printf '%-24s %-14s %-12s %-12s %-14s %s\n' "$name" "$group" "$profile" "systemd:$state" "$boot" "$action"
+    return 0
+  fi
+
+  reason=""
+  [[ -d "$path" ]] || reason="missing-dir"
+  [[ -n "$reason" || -x "$path/svc.sh" ]] || reason="missing-svc.sh"
+  [[ -n "$reason" || -f "$path/.runner" ]] || reason="missing-.runner"
+
+  if [[ -n "$reason" ]]; then
+    printf '%-24s %-14s %-12s %-12s %-14s %s\n' "$name" "$group" "$profile" "legacy" "-" "blocked:$reason"
+  else
+    printf '%-24s %-14s %-12s %-12s %-14s %s\n' "$name" "$group" "$profile" "legacy" "-" "migrate"
+  fi
+}
+
 doctor_runner() {
   local name="$1" path="$2"
   local unit
@@ -234,6 +323,10 @@ doctor_runner() {
 
   unit="$(service_unit "$path" 2>/dev/null || true)"
   if [[ -n "$unit" ]]; then
+    if registration_deleted "$unit"; then
+      echo "ERRO systemd=$unit registration=deleted action=reconfigure"
+      return 1
+    fi
     echo "OK systemd=$unit state=$(systemctl is-active "$unit" 2>/dev/null || true)"
   else
     echo "OK legacy"
@@ -269,6 +362,9 @@ process_config() {
         [[ -n "$unit" ]] && state="$(systemctl is-active "$unit" 2>/dev/null || true)"
         printf '%-24s %-14s %-12s %-10s %s\n' "$name" "$group" "$profile" "$state" "${unit:--}"
         ;;
+      plan)
+        plan_runner "$name" "$path" "$profile" "$repo" "$enabled" "$group"
+        ;;
       doctor)
         doctor_runner "$name" "$path" || failures=$((failures + 1))
         ;;
@@ -297,7 +393,7 @@ main() {
       usage
       exit 0
       ;;
-    list|doctor|migrate|uninstall|start|stop|restart|status|logs)
+    list|plan|doctor|migrate|uninstall|start|stop|restart|status|logs)
       ;;
     *)
       usage
@@ -310,6 +406,8 @@ main() {
 
   if [[ "$action" == list ]]; then
     printf '%-24s %-14s %-12s %-10s %s\n' "RUNNER" "GROUP" "PROFILE" "STATE" "SYSTEMD UNIT"
+  elif [[ "$action" == plan ]]; then
+    printf '%-24s %-14s %-12s %-12s %-14s %s\n' "RUNNER" "GROUP" "PROFILE" "CURRENT" "BOOT" "PLAN"
   fi
 
   process_config "$action" "$target"
