@@ -14,10 +14,10 @@ This skill is for **personal/local runner administration**, not for editing GitH
 Resolve the central installation in this order:
 
 1. `$ACTIONS_RUNNERS_HOME`
-2. `/home/alangomes/actions-runners`
+2. `~/actions-runners`
 
 ```bash
-RUNNERS_HOME="${ACTIONS_RUNNERS_HOME:-/home/alangomes/actions-runners}"
+RUNNERS_HOME="${ACTIONS_RUNNERS_HOME:-$HOME/actions-runners}"
 ```
 
 If `$RUNNERS_HOME/.env.local` exists, load it before resolving the registry:

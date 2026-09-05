@@ -14,10 +14,10 @@ The user's explicit instruction takes precedence. If the user explicitly asks to
 Resolve the central runner installation in this order:
 
 1. `$ACTIONS_RUNNERS_HOME`
-2. `/home/alangomes/actions-runners`
+2. `~/actions-runners`
 
 ```bash
-RUNNERS_HOME="${ACTIONS_RUNNERS_HOME:-/home/alangomes/actions-runners}"
+RUNNERS_HOME="${ACTIONS_RUNNERS_HOME:-$HOME/actions-runners}"
 
 if [[ -f "$RUNNERS_HOME/.env.local" ]]; then
   set -a
