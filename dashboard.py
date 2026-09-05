@@ -18,7 +18,10 @@ from urllib.request import Request, urlopen
 from urllib.error import HTTPError, URLError
 
 BASE_DIR = Path(__file__).resolve().parent
-CONFIG_PATH = BASE_DIR / "runners.conf"
+DEFAULT_CONFIG_PATH = Path(
+    os.environ.get("XDG_CONFIG_HOME", str(Path.home() / ".config"))
+) / "actions-runners" / "runners.conf"
+CONFIG_PATH = Path(os.environ.get("RUNNERS_CONFIG", str(DEFAULT_CONFIG_PATH))).expanduser()
 PID_DIR = BASE_DIR / ".runner-pids"
 LOG_DIR = BASE_DIR / ".runner-logs"
 CACHE_ROOT = Path(os.environ.get("RUNNER_CACHE_ROOT", BASE_DIR / ".runner-cache"))
@@ -198,15 +201,6 @@ def normalize_slug(value: str) -> str:
 
 
 def infer_group(name: str, repo: str) -> str:
-    value = f"{name},{repo}".lower()
-    if "agentsorch" in value:
-        return "agentsorch"
-    if "neurotrack" in value or "docsneurotrack" in value:
-        return "neurotrack"
-    if "ea-fc" in value or "sheffield" in value:
-        return "ea-fc"
-    if "roboapostas" in value or "robo-apostas" in value or "apostas" in value:
-        return "roboapostas"
     return normalize_slug(repo.rsplit("/", 1)[-1] or name)
 
 

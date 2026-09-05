@@ -19,7 +19,7 @@
     {
       "label": "Configure WSL Docker portproxy (Administrator)",
       "type": "shell",
-      "command": "powershell.exe -NoProfile -Command \"Start-Process powershell.exe -Verb RunAs -Wait -ArgumentList '-ExecutionPolicy Bypass -File', '\\\\wsl.localhost\\Ubuntu$(wslpath -w /home/alangomes/actions-runners/setup-dashboard-portproxy.ps1 | sed 's#^.*Ubuntu##')'\"",
+      "command": "powershell.exe -NoProfile -Command \"Start-Process powershell.exe -Verb RunAs -Wait -ArgumentList '-ExecutionPolicy Bypass -File', '$(wslpath -w ./setup-dashboard-portproxy.ps1)'\"",
       "presentation": {
         "reveal": "always",
         "panel": "dedicated",

@@ -13,5 +13,5 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
-      - .:/home/alangomes/actions-runners
+      - .:/opt/actions-runners
     restart: unless-stopped

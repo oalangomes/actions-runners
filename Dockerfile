@@ -9,7 +9,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     RUNNERS_DASHBOARD_HOST=0.0.0.0 \
     RUNNERS_DASHBOARD_PORT=8765
 
-WORKDIR /home/alangomes/actions-runners
+WORKDIR /opt/actions-runners
 
 COPY dashboard.py runners.sh prewarm-actions.sh runner-cache-env.sh ./
 RUN chmod +x dashboard.py runners.sh prewarm-actions.sh

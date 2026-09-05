@@ -2,6 +2,8 @@
 set -euo pipefail
 
 BASE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=/dev/null
+source "$BASE_DIR/runner-runtime-env.sh"
 HOST="${RUNNERS_DASHBOARD_HOST:-127.0.0.1}"
 PORT="${RUNNERS_DASHBOARD_PORT:-8765}"
 BACKEND_PORT="${RUNNERS_DASHBOARD_BACKEND_PORT:-8766}"
