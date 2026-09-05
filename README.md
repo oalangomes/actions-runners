@@ -386,16 +386,38 @@ Comandos úteis:
 ./runners.sh restart agentsorch
 ```
 
-## Skills do Codex
+## Agent Skills — Codex, Copilot, Claude e outros
+
+As automações reutilizáveis ficam em `skills/` no formato portátil `SKILL.md`.
 
 ```text
-codex-skills/
-├── create-new-runner.md
-└── evaluate-runner-logs.md
+skills/
+├── start-project-runners-before-pr/
+│   └── SKILL.md
+└── manage-local-github-runners/
+    └── SKILL.md
 ```
 
-- `create-new-runner.md`: cria runners sem sobrescrever pastas existentes.
-- `evaluate-runner-logs.md`: identifica hosted/self-hosted, gargalos e melhorias sem alterar workflows sem autorização.
+Instale globalmente em todos os alvos suportados:
+
+```bash
+./install-agent-skills.sh --tool all
+```
+
+Ou apenas em uma ferramenta:
+
+```bash
+./install-agent-skills.sh --tool codex
+./install-agent-skills.sh --tool copilot
+./install-agent-skills.sh --tool claude
+./install-agent-skills.sh --tool agents
+```
+
+Também é possível instalar dentro de outro projeto com `--scope project`.
+
+Veja `skills/README.md` para a matriz de destinos e exemplos completos.
+
+O diretório `codex-skills/` permanece apenas para documentação/compatibilidade histórica; novas skills devem ser provider-neutral e nascer em `skills/`.
 
 ## Templates de workflow
 
