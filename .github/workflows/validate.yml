@@ -31,7 +31,8 @@ jobs:
         run: |
           if grep -R -nE '/home/alangomes|oalangomes/|AlanGomes-PC|agentsorch|neurotrack|roboapostas|sheffield' \
             --exclude-dir=.git \
-            --exclude='*.lock' .; then
+            --exclude='*.lock' \
+            --exclude='validate.yml' .; then
             echo "Found maintainer-specific assumptions in tracked content." >&2
             exit 1
           fi
