@@ -149,7 +149,7 @@ my-api|/home/me/.local/share/actions-runners/runners/my-api|python|me/my-api|tru
 
 Novas instâncias são criadas em `RUNNER_DATA_ROOT`, portanto cadastrar um projeto novo não altera mais o `.gitignore` do repositório.
 
-Durante a migração, o `runners.conf` histórico ainda pode existir no checkout como fallback. Ele só deve ser removido do Git depois que a cópia local externa for validada.
+O `runners.conf` real não é versionado. O repositório mantém apenas `runners.conf.example`; cada máquina usa o path apontado por `RUNNERS_CONFIG`.
 
 ## Operar runners individuais
 
