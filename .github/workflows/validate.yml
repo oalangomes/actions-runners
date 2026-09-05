@@ -1,0 +1,28 @@
+name: Validate runner platform
+
+on:
+  pull_request:
+  push:
+    branches:
+      - master
+
+permissions:
+  contents: read
+
+jobs:
+  static-validation:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate shell syntax
+        shell: bash
+        run: |
+          bash -n             configure-runner.sh             runners.sh             runner-services.sh             setup-cockpit.sh             cache.sh             prewarm-cache.sh             prewarm-actions.sh             runner-cache-env.sh             start-dashboard.sh             start-dashboard-docker.sh
+
+      - name: Validate dashboard Python
+        run: python3 -m py_compile dashboard.py
+
+      - name: Validate Docker Compose
+        run: docker compose config --quiet
