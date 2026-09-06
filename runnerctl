@@ -45,7 +45,7 @@ Uso:
 Notas:
   - on-demand é a policy padrão.
   - "ensure ." inicia somente os runners habilitados mapeados ao repositório atual.
-  - "add" usa GitHub CLI autenticado e nunca passa o registration token em argv.
+  - "add" usa GitHub CLI autenticado, não persiste o registration token e o envia ao helper interno por stdin; o config.sh oficial recebe o token somente durante o registro.
 EOF
 }
 
