@@ -86,19 +86,6 @@ normalize_repo() {
 current_repo() {
   local repo=""
 
-  if [[ -x "$PLATFORM_HOME/runner-package.sh" ]]; then
-    package_platform="$("$PLATFORM_HOME/runner-package.sh" detect 2>/dev/null || true)"
-    if [[ -n "$package_platform" ]]; then
-      echo "[OK] runner_package_platform=$package_platform"
-    else
-      echo "[MISSING] runner_package_platform=unsupported"
-      rc=1
-    fi
-  else
-    echo "[MISSING] runner-package.sh"
-    rc=1
-  fi
-
   if command -v gh >/dev/null 2>&1; then
     repo="$(gh repo view --json nameWithOwner --jq .nameWithOwner 2>/dev/null || true)"
   fi
@@ -324,6 +311,19 @@ platform_doctor() {
       rc=1
     fi
   done
+
+  if [[ -x "$PLATFORM_HOME/runner-package.sh" ]]; then
+    package_platform="$("$PLATFORM_HOME/runner-package.sh" detect 2>/dev/null || true)"
+    if [[ -n "$package_platform" ]]; then
+      echo "[OK] runner_package_platform=$package_platform"
+    else
+      echo "[MISSING] runner_package_platform=unsupported"
+      rc=1
+    fi
+  else
+    echo "[MISSING] runner-package.sh"
+    rc=1
+  fi
 
   if command -v gh >/dev/null 2>&1; then
     if gh auth status >/dev/null 2>&1; then
