@@ -9,7 +9,7 @@ They use the portable `SKILL.md` Agent Skills format so the workflow itself does
 | Skill | Purpose |
 |---|---|
 | `start-project-runners-before-pr` | Before publishing a PR, start and validate only the local runners mapped to the current repository. |
-| `manage-local-github-runners` | Inventory, start/stop, diagnose, register and validate local GitHub Actions runners for personal repositories. |
+| `manage-local-github-runners` | Inventory, start/stop, diagnose, register, remove and validate local GitHub Actions runners. |
 
 ## Install
 
