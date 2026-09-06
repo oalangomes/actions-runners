@@ -16,6 +16,34 @@ O repositório contém a plataforma de gerenciamento. O inventário real de runn
 - Cockpit opcional para UI do host;
 - Agent Skills portáveis para Codex, GitHub Copilot CLI, Claude Code e clientes compatíveis.
 
+## Plataformas suportadas
+
+| Ambiente | Estado |
+|---|---|
+| Linux x64 + systemd | ✅ suportado |
+| Linux arm64 + systemd | ✅ suportado |
+| WSL2 com systemd habilitado | ✅ suportado |
+| macOS nativo | ❌ fora do escopo |
+| Windows nativo | ❌ fora do escopo |
+
+O produto é **Linux + systemd**. WSL2 é apenas um ambiente Linux suportado; macOS exigiria `launchd` e Windows exigiria um backend de Windows Services, ambos fora do escopo atual.
+
+## Catálogo de funcionalidades
+
+| Capacidade | Interface pública |
+|---|---|
+| Inicializar máquina | `runnerctl init` |
+| Inventário e grupos | `runnerctl list`, `runnerctl groups` |
+| Status e saúde | `runnerctl status`, `runnerctl health`, `runnerctl doctor` |
+| Lifecycle | `runnerctl start/stop/restart/logs` |
+| On-demand / autostart | `runnerctl on-demand`, `runnerctl autostart` |
+| Repositório atual | `runnerctl repo .`, `runnerctl ensure .` |
+| Registrar runner | `runnerctl add .` |
+| Remover runner | `runnerctl remove <runner> --plan/--yes` |
+| Pacote oficial do runner | `runnerctl package detect/ensure` |
+| Agent Skills | `runnerctl skills list/install` |
+| Diagnóstico da plataforma | `runnerctl platform-doctor` |
+
 ## Modelo
 
 ```text
@@ -232,7 +260,7 @@ runnerctl skills install agents
 
 A skill `start-project-runners-before-pr` pode acordar apenas os runners associados ao repositório atual antes de publicar uma PR.
 
-A skill `manage-local-github-runners` cobre inventário, health, start/stop, diagnóstico e cadastro de runners para repositórios pessoais.
+A skill `manage-local-github-runners` cobre inventário, health, start/stop, diagnóstico, cadastro e remoção governada de runners.
 
 Veja [skills/README.md](skills/README.md) para destinos e instalação project-local.
 
@@ -263,7 +291,17 @@ O grupo é explícito quando informado. Em registros antigos sem a sexta coluna,
 
 `_work` continua sendo workspace descartável.
 
-Runner release packages, tool caches and stack caches ficam sob `${XDG_CACHE_HOME:-~/.cache}/actions-runners`.
+O cache durável da plataforma fica fora do checkout, sob `${XDG_CACHE_HOME:-~/.cache}/actions-runners`:
+
+```text
+~/.cache/actions-runners/
+├── packages/       # tarballs oficiais do GitHub Runner, validados por SHA-256
+├── shared/
+├── tools/          # tool cache compartilhado
+└── stacks/         # npm/pnpm/yarn, pip, Gradle/Maven, Pub, Go, NuGet etc.
+```
+
+O prewarm de **GitHub Actions** é a exceção: `prewarm-actions.sh` aquece `<runner>/_work/_actions`, porque essa é a estrutura consumida pelo runner e ela é específica de cada instância.
 
 Runtime state (service env, logs/PIDs legados durante migração) fica sob `${XDG_STATE_HOME:-~/.local/state}/actions-runners`.
 
