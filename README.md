@@ -144,6 +144,8 @@ runnerctl start my-api
 runnerctl stop my-api
 runnerctl restart my-api
 runnerctl logs my-api
+
+runnerctl remove my-api --plan
 ```
 
 Por grupo:
@@ -160,6 +162,29 @@ runnerctl ensure .
 ```
 
 Evite `start all` no uso normal. O modelo recomendado é acordar somente a capacidade necessária.
+
+### Remoção segura
+
+```bash
+runnerctl remove my-api --plan
+runnerctl remove my-api --yes
+```
+
+A remoção padrão para o runner exato para/desinstala o serviço, valida e remove a registration remota, remove sua entrada do registry e **preserva a pasta local**.
+
+Para apagar também a pasta da instância:
+
+```bash
+runnerctl remove my-api --yes --delete-dir
+```
+
+Para remover apenas da plataforma local e manter a registration no GitHub:
+
+```bash
+runnerctl remove my-api --yes --keep-remote
+```
+
+`remove` não aceita `all` nem grupos.
 
 ## On-demand e autostart
 
