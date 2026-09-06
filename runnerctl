@@ -340,11 +340,31 @@ runner_metadata_value() {
 
 runner_local_unit() {
   local path="$1"
+  local unit working_dir
+
   if [[ -f "$path/.service" ]]; then
-    tr -d '[:space:]' < "$path/.service"
-  else
-    printf '%s\n' "unknown"
+    unit="$(tr -d '[:space:]' < "$path/.service")"
+    [[ -n "$unit" ]] && {
+      printf '%s\n' "$unit"
+      return 0
+    }
   fi
+
+  if command -v systemctl >/dev/null 2>&1 && [[ -d /run/systemd/system ]]; then
+    while read -r unit; do
+      [[ -n "$unit" ]] || continue
+      working_dir="$(systemctl show "$unit" --property=WorkingDirectory --value 2>/dev/null || true)"
+      if [[ "$working_dir" == "$path" ]]; then
+        printf '%s\n' "$unit"
+        return 0
+      fi
+    done < <(
+      systemctl list-unit-files 'actions.runner.*.service' --no-legend --no-pager 2>/dev/null |
+        awk '{print $1}'
+    )
+  fi
+
+  printf '%s\n' "unknown"
 }
 
 remove_registry_entry() {
