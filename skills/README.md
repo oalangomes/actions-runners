@@ -16,16 +16,16 @@ They use the portable `SKILL.md` Agent Skills format so the workflow itself does
 Install both skills for the primary user-level targets (Codex, Copilot and Claude):
 
 ```bash
-./install-agent-skills.sh --tool all
+runnerctl skills install all
 ```
 
 Or choose one tool:
 
 ```bash
-./install-agent-skills.sh --tool codex
-./install-agent-skills.sh --tool copilot
-./install-agent-skills.sh --tool claude
-./install-agent-skills.sh --tool agents
+runnerctl skills install codex
+runnerctl skills install copilot
+runnerctl skills install claude
+runnerctl skills install agents
 ```
 
 Install only one skill:
